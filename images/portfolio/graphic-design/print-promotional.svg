@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-label="Placeholder: Print Material Design">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0c1b38"/><stop offset="1" stop-color="#03060d"/></linearGradient>
+<radialGradient id="r" cx=".8" cy=".15" r=".7"><stop offset="0" stop-color="#2f6bff" stop-opacity=".35"/><stop offset="1" stop-color="#2f6bff" stop-opacity="0"/></radialGradient>
+<pattern id="p" width="60" height="60" patternUnits="userSpaceOnUse"><path d="M60 0H0V60" fill="none" stroke="#3b82ff" stroke-opacity=".12"/></pattern></defs>
+<rect width="1200" height="800" fill="url(#g)"/><rect width="1200" height="800" fill="url(#p)"/><rect width="1200" height="800" fill="url(#r)"/>
+<rect x="60" y="60" width="1080" height="680" rx="6" fill="none" stroke="#4cc9ff" stroke-opacity=".35" stroke-dasharray="10 10"/>
+<text x="600" y="380" text-anchor="middle" font-family="Arial,sans-serif" font-size="46" font-weight="700" fill="#eaf2ff">Print Material Design</text>
+<text x="600" y="440" text-anchor="middle" font-family="Arial,sans-serif" font-size="26" fill="#8fa3c4">Placeholder image. Replace with your real project.</text></svg>

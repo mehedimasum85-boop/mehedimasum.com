@@ -1,0 +1,9 @@
+{
+  "name": "masum-portfolio",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Portfolio site with an admin panel (Vercel + Blob storage).",
+  "scripts": { "dev": "node dev-server.js" },
+  "dependencies": { "@vercel/blob": "latest" },
+  "engines": { "node": ">=18" }
+}
