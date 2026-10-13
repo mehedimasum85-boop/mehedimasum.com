@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
-const useBlob = !!TOKEN;
+const useBlob = !!(TOKEN || process.env.BLOB_STORE_ID);
 const LOCAL = path.join(process.cwd(), '.data');
 
 function ensureConfigured() {
