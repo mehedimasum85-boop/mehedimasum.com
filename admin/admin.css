@@ -154,3 +154,7 @@ textarea.in.code { font-family: ui-monospace, Menlo, Consolas, monospace; font-s
 }
 .in, select.in, textarea.in { font-weight: 500; }
 a.btn { text-decoration: none; color: var(--text); }
+
+.linkbtn { background: none; border: 0; padding: 0; color: var(--cyan); cursor: pointer; font-size: .85rem; text-align: left; text-decoration: underline; }
+.linkbtn:hover { color: #fff; }
+.okmsg { color: #7ee2a8; font-size: .85rem; min-height: 1.2em; }
