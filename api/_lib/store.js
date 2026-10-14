@@ -33,7 +33,8 @@ function s3() {
   const m = require('@aws-sdk/client-s3');
   const client = new m.S3Client({
     region: 'auto',
-    endpoint: 'https://' + R2.account + '.r2.cloudflarestorage.com',
+    endpoint: process.env.R2_ENDPOINT || ('https://' + R2.account + '.r2.cloudflarestorage.com'),
+    forcePathStyle: !!process.env.R2_ENDPOINT, // only for local testing; real R2 does not need it
     credentials: { accessKeyId: R2.key, secretAccessKey: R2.secret }
   });
   _s3 = { client, m };
@@ -181,12 +182,30 @@ async function removeFiles(pathnames) {
   pathnames.forEach((p) => { try { fs.unlinkSync(path.join(LOCAL, p)); } catch (e) {} });
 }
 
+// Add a random suffix before the extension: uploads/2026-10/photo.jpg -> uploads/2026-10/photo-1a2b3c4d5e.jpg
+function suffixed(pathname) {
+  const dot = pathname.lastIndexOf('.');
+  const hasExt = dot > pathname.lastIndexOf('/');
+  return (hasExt ? pathname.slice(0, dot) : pathname) + '-' + crypto.randomBytes(5).toString('hex') + (hasExt ? pathname.slice(dot) : '');
+}
+
+// R2 only: a one-hour upload link so the browser can send a big file straight to R2
+// (skips Vercel's 4.5 MB request limit). Returns null when R2 is not in use.
+async function presignPut(pathname, contentType) {
+  ensureConfigured();
+  if (!useR2) return null;
+  const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+  const { client, m } = s3();
+  const k = suffixed(pathname);
+  const uploadUrl = await getSignedUrl(client, new m.PutObjectCommand({ Bucket: R2.bucket, Key: k, ContentType: contentType }), { expiresIn: 3600 });
+  return { uploadUrl, url: r2Url(k), key: k };
+}
+
 // Save an uploaded image. Returns its public URL.
 async function putFile(pathname, buffer, contentType) {
   ensureConfigured();
   if (useR2) {
-    const dot = pathname.lastIndexOf('.');
-    const k = (dot > pathname.lastIndexOf('/') ? pathname.slice(0, dot) : pathname) + '-' + crypto.randomBytes(5).toString('hex') + (dot > pathname.lastIndexOf('/') ? pathname.slice(dot) : '');
+    const k = suffixed(pathname);
     await r2Put(k, buffer, contentType, 'public, max-age=31536000, immutable');
     return r2Url(k);
   }
@@ -201,4 +220,4 @@ async function putFile(pathname, buffer, contentType) {
   return '/' + pathname;
 }
 
-module.exports = { getJSON, putJSON, listFiles, fetchJSONByPathname, removeFiles, putFile, useBlob: useBlob || useR2, useR2, LOCAL };
+module.exports = { getJSON, putJSON, listFiles, fetchJSONByPathname, removeFiles, putFile, presignPut, useBlob: useBlob || useR2, useR2, LOCAL };
