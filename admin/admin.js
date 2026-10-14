@@ -459,17 +459,52 @@
     var ok = h('p', { class: 'okmsg' }, '');
     var btn = h('button', { class: 'btn btn--primary', type: 'submit' }, 'Send reset link');
     var form = h('form', { class: 'login__card' },
-      h('h1', {}, 'Forgot password'), h('p', {}, 'Enter your email. If it is the allowed one, we send you a link to set a new password.'),
+      h('h1', {}, 'Forgot password'), h('p', {}, 'Enter your email. We send a 6-digit code to it.'),
       h('label', { class: 'f' }, 'Email', em), err, ok, btn,
       h('button', { class: 'linkbtn', type: 'button', onclick: function () { renderLogin(); } }, 'Back to login'));
     form.addEventListener('submit', function (e) {
       e.preventDefault(); btn.disabled = true; err.textContent = ''; ok.textContent = '';
       api('POST', '/api/auth', { action: 'forgot', email: em.value.trim() }).then(function (j) {
-        ok.textContent = j.message || 'If that email is allowed, a reset link has been sent.'; btn.disabled = false;
+        ok.textContent = j.message || 'Email found.';
+        setTimeout(function () { renderOtp(em.value.trim(), j.seconds || 60); }, 700);
       }).catch(function (e2) { err.textContent = e2.message; btn.disabled = false; });
     });
     app.appendChild(h('div', { class: 'login' }, form));
     em.focus();
+  }
+
+  var otpTimer = null;
+  function renderOtp(email, seconds) {
+    if (otpTimer) clearInterval(otpTimer);
+    var app = $('#app'); app.innerHTML = '';
+    var code = h('input', { class: 'in', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6, required: true, placeholder: '6-digit code' });
+    var err = h('p', { class: 'err' }, '');
+    var info = h('p', { class: 'okmsg' }, 'Code valid for ' + seconds + ' seconds.');
+    var btn = h('button', { class: 'btn btn--primary', type: 'submit' }, 'Verify code');
+    var resend = h('button', { class: 'linkbtn', type: 'button', disabled: true }, 'Send a new code');
+    var form = h('form', { class: 'login__card' },
+      h('h1', {}, 'Enter the code'), h('p', {}, 'We sent a 6-digit code to ' + email + '.'),
+      h('label', { class: 'f' }, 'Code', code), info, err, btn, resend,
+      h('button', { class: 'linkbtn', type: 'button', onclick: function () { clearInterval(otpTimer); renderLogin(); } }, 'Back to login'));
+    var left = seconds;
+    otpTimer = setInterval(function () {
+      left--;
+      if (left <= 0) { clearInterval(otpTimer); info.textContent = 'The code has expired. Send a new code.'; resend.disabled = false; }
+      else info.textContent = 'Code valid for ' + left + ' seconds.';
+    }, 1000);
+    resend.addEventListener('click', function () {
+      err.textContent = ''; resend.disabled = true;
+      api('POST', '/api/auth', { action: 'forgot', email: email }).then(function (j) { renderOtp(email, j.seconds || 60); })
+        .catch(function (e2) { err.textContent = e2.message; resend.disabled = false; });
+    });
+    form.addEventListener('submit', function (e) {
+      e.preventDefault(); err.textContent = ''; btn.disabled = true;
+      api('POST', '/api/auth', { action: 'verify-otp', code: code.value.trim() }).then(function (j) {
+        clearInterval(otpTimer); renderReset(j.token);
+      }).catch(function (e2) { err.textContent = e2.message; btn.disabled = false; });
+    });
+    app.appendChild(h('div', { class: 'login' }, form));
+    code.focus();
   }
 
   function renderReset(token) {
