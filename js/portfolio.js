@@ -13,6 +13,7 @@ window.PortfolioPage = (function () {
   if (!gallery || !filterBox || !dialog) return;
 
   var PER_SLIDE = 3;
+  function isVideo(u) { return /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(String(u || '')); }
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // ---------- tidy the data ----------
@@ -25,7 +26,7 @@ window.PortfolioPage = (function () {
       slides = p.images.map(function (u) { return [u]; });
     }
     var all = [].concat.apply([], slides);
-    var cover = p.cover || all[0];
+    var cover = p.cover || all.filter(function (u) { return !isVideo(u); })[0];
     if (!slides.length && cover) slides = [[cover]];
     return {
       title: p.title || 'Untitled',
@@ -292,6 +293,17 @@ window.PortfolioPage = (function () {
       s.setAttribute('aria-roledescription', 'slide');
       s.setAttribute('aria-label', (k + 1) + ' of ' + n);
       imgs.forEach(function (u, j) {
+        if (isVideo(u)) {
+          var vd = el('video');
+          vd.src = u;
+          vd.controls = true;
+          vd.preload = 'metadata';
+          vd.setAttribute('playsinline', '');
+          if (p.cover && !isVideo(p.cover)) vd.poster = p.cover;
+          vd.setAttribute('aria-label', p.alt || p.title);
+          s.appendChild(vd);
+          return;
+        }
         var im = el('img');
         im.src = u;
         im.alt = p.alt + (n > 1 || imgs.length > 1 ? ' (slide ' + (k + 1) + ' of ' + n + (imgs.length > 1 ? ', image ' + (j + 1) : '') + ')' : '');
@@ -333,7 +345,8 @@ window.PortfolioPage = (function () {
     btnPrevImg.disabled = k === 0;
     btnNextImg.disabled = k === n - 1;
     lbImgCount.textContent = (k + 1) + ' / ' + n;
-    bg.src = p.slides[k][0];
+    Array.prototype.forEach.call(track.querySelectorAll('video'), function (v) { v.pause(); });
+    bg.src = isVideo(p.slides[k][0]) ? (p.cover || '') : p.slides[k][0];
   }
 
   function changeProject(delta) {
@@ -359,6 +372,7 @@ window.PortfolioPage = (function () {
     dialog.dispatchEvent(new Event('close'));
   }
   dialog.addEventListener('close', function () {
+    Array.prototype.forEach.call(track.querySelectorAll('video'), function (v) { v.pause(); });
     document.body.style.overflow = '';
     if (opener && document.body.contains(opener)) opener.focus();
   });
@@ -372,13 +386,14 @@ window.PortfolioPage = (function () {
   // Arrow keys move through the images. If the project has only one image, they move between projects.
   dialog.addEventListener('keydown', function (e) {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (e.target && e.target.tagName === 'VIDEO') return; // arrows seek inside the video
     var dir = e.key === 'ArrowLeft' ? -1 : 1;
     if (flat[projIndex] && flat[projIndex].slides.length > 1) goTo(slideIndex + dir); else changeProject(dir);
   });
 
   // Swipe on touch screens.
   var startX = null;
-  stage.addEventListener('pointerdown', function (e) { if (!e.target.closest('button')) startX = e.clientX; });
+  stage.addEventListener('pointerdown', function (e) { if (!e.target.closest('button, video')) startX = e.clientX; });
   stage.addEventListener('pointerup', function (e) {
     if (startX === null) return;
     var dx = e.clientX - startX;
