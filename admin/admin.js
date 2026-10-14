@@ -68,6 +68,7 @@
     if (!S.dirty) { S.dirty = true; updateTop(); }
   }
   function updateTop() {
+    Array.prototype.forEach.call(document.querySelectorAll('.js-save'), function (b) { b.disabled = !S.dirty; });
     var st = $('#state'), sv = $('#saveBtn');
     if (!st) return;
     st.textContent = S.dirty ? 'Unsaved changes' : 'All changes saved';
@@ -106,14 +107,19 @@
 
   function save() {
     if (!S.dirty) return Promise.resolve();
-    var btn = $('#saveBtn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    function btns() { return Array.prototype.slice.call(document.querySelectorAll('#saveBtn, .js-save')); }
+    btns().forEach(function (b) { b.disabled = true; b.textContent = 'Saving...'; });
     return api('PUT', '/api/content', { rev: S.rev, content: S.content }).then(function (j) {
       S.rev = j.rev; S.dirty = false; updateTop(); toast('Saved. Your live site is updated.', 'ok');
     }).catch(function (e) {
       if (e.code === 'must_change') { go({ name: 'account' }); }
       fail(e);
-    }).then(function () { if (btn) { btn.textContent = 'Save changes'; btn.disabled = !S.dirty; } });
+    }).then(function () { btns().forEach(function (b) { b.textContent = 'Save changes'; b.disabled = !S.dirty; }); });
+  }
+  function saveButton(extra) {
+    var b = h('button', { class: 'btn btn--primary js-save' + (extra ? ' ' + extra : ''), type: 'button', onclick: save }, 'Save changes');
+    b.disabled = !S.dirty;
+    return b;
   }
 
   // ---------- field types (forms are generated from these lists) ----------
@@ -418,11 +424,11 @@
   }
 
   // ---------- modal ----------
-  function modal(title, body, onClose) {
+  function modal(title, body, onClose, withSave) {
     var back = h('div', { class: 'modal' });
     function close() { back.remove(); document.body.style.overflow = ''; if (onClose) onClose(); }
     back.appendChild(h('div', { class: 'modal__box', role: 'dialog', 'aria-label': title },
-      h('div', { class: 'modal__head' }, h('h2', {}, title), h('button', { class: 'btn btn--sm', type: 'button', onclick: close }, 'Close')), body));
+      h('div', { class: 'modal__head' }, h('h2', {}, title), withSave ? saveButton('btn--sm') : null, h('button', { class: 'btn btn--sm', type: 'button', onclick: close }, 'Close')), body));
     back.addEventListener('mousedown', function (e) { if (e.target === back) close(); });
     document.body.appendChild(back); document.body.style.overflow = 'hidden';
     return { close: close, el: back };
@@ -689,6 +695,10 @@
     var pf = S.content.portfolio, cats = pf.categories, projects = pf.projects;
     function count(id) { return projects.filter(function (p) { return p.category === id; }).length; }
 
+    view.appendChild(h('div', { class: 'card' }, h('div', { class: 'card__body' }, h('div', { class: 'row' },
+      h('p', { class: 'hint grow' }, 'Add or change projects, categories and uploads here, then click Save to put them on your live site. You do not need to leave this page.'),
+      saveButton()))));
+
     // categories
     var catBody = h('div', { class: 'card__body' }, h('h2', {}, 'Categories'),
       h('p', { class: 'hint' }, 'These appear as the filter buttons on the Portfolio page, in this order. A category with no projects is hidden from visitors.'));
@@ -769,7 +779,7 @@
     ph.addEventListener('change', function () { p.placeholder = ph.checked; touch(); });
     body.appendChild(h('label', { class: 'check' }, ph, 'Show "Placeholder" badge'));
     body.appendChild(slidesEditor(p));
-    modal(isNew ? 'New project' : 'Edit project', body, function () { renderShell(); });
+    modal(isNew ? 'New project' : 'Edit project', body, function () { renderShell(); }, true);
   }
 
   function slidesEditor(p) {
