@@ -1,21 +1,31 @@
 'use strict';
 const A = require('./_lib/auth');
 
+const crypto = require('crypto');
+const store = require('./_lib/store');
+
 // Only this address can request a password reset (override with the RESET_EMAIL env var).
 const RESET_EMAIL = String(process.env.RESET_EMAIL || 'mehedimasum85@gmail.com').trim().toLowerCase();
-const RESET_TTL = 30 * 60; // reset link works for 30 minutes
-const resetTag = (acc) => 'reset:' + (acc.pwv || 'default'); // link dies as soon as the password changes
+const OTP_KEY = 'admin/reset-otp';
+const OTP_TTL = 60;        // the 6-digit code works for this many seconds (1 minute)
+const OTP_TRIES = 5;       // wrong guesses allowed per code
+const RESET_TTL = 10 * 60; // after a correct code you have this many seconds to type the new password
+const resetTag = (acc) => 'reset:' + (acc.pwv || 'default'); // everything dies as soon as the password changes
+const nowSec = () => Math.floor(Date.now() / 1000);
+const otpHash = (code, tag) => crypto.createHmac('sha256', process.env.SESSION_SECRET || process.env.BLOB_READ_WRITE_TOKEN || 'dev').update('otp:' + code + ':' + tag).digest('hex');
 
-async function sendResetMail(link) {
+async function sendCodeMail(code) {
+  const mins = OTP_TTL / 60;
+  const when = mins >= 1 && OTP_TTL % 60 === 0 ? mins + (mins === 1 ? ' minute' : ' minutes') : OTP_TTL + ' seconds';
   const r = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + process.env.RESEND_API_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       from: process.env.MAIL_FROM || 'Portfolio Admin <onboarding@resend.dev>',
       to: [RESET_EMAIL],
-      subject: 'Reset your admin password',
-      text: 'Someone asked to reset the admin password for your website.\n\nOpen this link within 30 minutes to choose a new password:\n' + link + '\n\nIf this was not you, ignore this email. Nothing will change.',
-      html: '<p>Someone asked to reset the admin password for your website.</p><p><a href="' + link + '">Choose a new password</a> (works for 30 minutes).</p><p>If this was not you, ignore this email. Nothing will change.</p>'
+      subject: 'Your admin password reset code: ' + code,
+      text: 'Your password reset code is ' + code + '\n\nIt works for ' + when + '. If this was not you, ignore this email. Nothing will change.',
+      html: '<p>Your password reset code is</p><p style="font-size:28px;letter-spacing:6px"><b>' + code + '</b></p><p>It works for ' + when + '. If this was not you, ignore this email. Nothing will change.</p>'
     })
   });
   return r.ok;
@@ -50,15 +60,46 @@ module.exports = async (req, res) => {
       const ip = 'f:' + A.ipOf(req);
       if (A.limited(ip)) return A.send(res, 429, { error: 'Too many attempts. Please wait 10 minutes and try again.' });
       A.noteFail(ip);
-      const generic = { ok: true, message: 'If that email is allowed, a reset link has been sent. It works for 30 minutes.' };
-      if (String(b.email || '').trim().toLowerCase() !== RESET_EMAIL) return A.send(res, 200, generic);
+      if (String(b.email || '').trim().toLowerCase() !== RESET_EMAIL) return A.send(res, 404, { error: 'This email was not found.' });
       if (!process.env.RESEND_API_KEY) return A.send(res, 500, { error: 'Email is not set up yet: RESEND_API_KEY is missing in Vercel.' });
       const acc = await A.getAccount();
-      const token = A.sign({ k: 'reset', v: resetTag(acc), exp: Math.floor(Date.now() / 1000) + RESET_TTL });
-      const base = String(process.env.SITE_URL || ('https://' + req.headers.host)).replace(/\/+$/, '');
-      const sent = await sendResetMail(base + '/admin/?reset=' + encodeURIComponent(token));
-      if (!sent) return A.send(res, 502, { error: 'Could not send the email. Check RESEND_API_KEY, and that your Resend account was created with this same email.' });
-      return A.send(res, 200, generic);
+      const tag = resetTag(acc);
+      const old = await store.getJSON(OTP_KEY);
+      if (old && old.tag === tag && old.exp > nowSec()) {
+        return A.send(res, 429, { error: 'A code was just sent. Please wait ' + (old.exp - nowSec()) + ' seconds, then ask for a new one.' });
+      }
+      const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+      await store.putJSON(OTP_KEY, { hash: otpHash(code, tag), tag: tag, exp: nowSec() + OTP_TTL, tries: 0 }, { secret: true });
+      const sent = await sendCodeMail(code);
+      if (!sent) {
+        await store.putJSON(OTP_KEY, { exp: 0 }, { secret: true });
+        return A.send(res, 502, { error: 'Could not send the email. Check RESEND_API_KEY, and that your Resend account was created with this same email.' });
+      }
+      return A.send(res, 200, { ok: true, seconds: OTP_TTL, message: 'Email found. A 6-digit code was sent to it.' });
+    }
+
+    if (b.action === 'verify-otp') {
+      const ip = 'v:' + A.ipOf(req);
+      if (A.limited(ip)) return A.send(res, 429, { error: 'Too many attempts. Please wait 10 minutes and try again.' });
+      const acc = await A.getAccount();
+      const tag = resetTag(acc);
+      const rec = await store.getJSON(OTP_KEY);
+      const code = String(b.code || '').replace(/\s/g, '');
+      if (!rec || rec.tag !== tag || !(rec.exp > nowSec()) || typeof rec.hash !== 'string' || rec.hash.length !== 64) {
+        return A.send(res, 400, { error: 'This code has expired. Please ask for a new one.' });
+      }
+      if (rec.tries >= OTP_TRIES) return A.send(res, 400, { error: 'Too many wrong tries. Please ask for a new code.' });
+      const ok = /^\d{6}$/.test(code) && crypto.timingSafeEqual(Buffer.from(otpHash(code, tag), 'hex'), Buffer.from(rec.hash, 'hex'));
+      if (!ok) {
+        rec.tries = (rec.tries || 0) + 1;
+        await store.putJSON(OTP_KEY, rec, { secret: true });
+        A.noteFail(ip);
+        const left = OTP_TRIES - rec.tries;
+        return A.send(res, 400, { error: left > 0 ? 'Wrong code. ' + left + (left === 1 ? ' try left.' : ' tries left.') : 'Too many wrong tries. Please ask for a new code.' });
+      }
+      await store.putJSON(OTP_KEY, { exp: 0 }, { secret: true }); // a code works only once
+      const token = A.sign({ k: 'reset', v: tag, exp: nowSec() + RESET_TTL });
+      return A.send(res, 200, { ok: true, token: token });
     }
 
     if (b.action === 'reset') {
