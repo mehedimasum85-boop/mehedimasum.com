@@ -408,7 +408,7 @@
     var form = h('form', { class: 'login__card' },
       h('h1', {}, 'Admin login'), h('p', {}, 'Manage everything on your website from here.'),
       h('label', { class: 'f' }, 'ID', u), h('label', { class: 'f' }, 'Password', p), err, btn,
-      h('div', { class: 'demo', html: 'First time? Demo login: ID <code>admin</code> and password <code>Masum@Demo2026</code>. You must change it before you can save anything.' }));
+      h('button', { class: 'linkbtn', type: 'button', onclick: function () { renderForgot(); } }, 'Forgot password?'));
     form.addEventListener('submit', function (e) {
       e.preventDefault(); btn.disabled = true; err.textContent = '';
       api('POST', '/api/auth', { action: 'login', username: u.value.trim(), password: p.value }).then(function (j) {
@@ -419,6 +419,52 @@
     });
     app.appendChild(h('div', { class: 'login' }, form));
     u.focus();
+  }
+
+  // ---------- forgot / reset password ----------
+  function renderForgot() {
+    var app = $('#app'); app.innerHTML = '';
+    var em = h('input', { class: 'in', type: 'email', autocomplete: 'email', required: true, placeholder: 'Your email' });
+    var err = h('p', { class: 'err' }, '');
+    var ok = h('p', { class: 'okmsg' }, '');
+    var btn = h('button', { class: 'btn btn--primary', type: 'submit' }, 'Send reset link');
+    var form = h('form', { class: 'login__card' },
+      h('h1', {}, 'Forgot password'), h('p', {}, 'Enter your email. If it is the allowed one, we send you a link to set a new password.'),
+      h('label', { class: 'f' }, 'Email', em), err, ok, btn,
+      h('button', { class: 'linkbtn', type: 'button', onclick: function () { renderLogin(); } }, 'Back to login'));
+    form.addEventListener('submit', function (e) {
+      e.preventDefault(); btn.disabled = true; err.textContent = ''; ok.textContent = '';
+      api('POST', '/api/auth', { action: 'forgot', email: em.value.trim() }).then(function (j) {
+        ok.textContent = j.message || 'If that email is allowed, a reset link has been sent.'; btn.disabled = false;
+      }).catch(function (e2) { err.textContent = e2.message; btn.disabled = false; });
+    });
+    app.appendChild(h('div', { class: 'login' }, form));
+    em.focus();
+  }
+
+  function renderReset(token) {
+    var app = $('#app'); app.innerHTML = '';
+    var u = h('input', { class: 'in', type: 'text', autocomplete: 'username', placeholder: 'Leave empty to keep the current ID' });
+    var np = h('input', { class: 'in', type: 'password', autocomplete: 'new-password', required: true });
+    var np2 = h('input', { class: 'in', type: 'password', autocomplete: 'new-password', required: true });
+    var err = h('p', { class: 'err' }, '');
+    var btn = h('button', { class: 'btn btn--primary', type: 'submit' }, 'Save new password');
+    var form = h('form', { class: 'login__card' },
+      h('h1', {}, 'Set a new password'), h('p', {}, 'Choose a new password (at least 10 characters).'),
+      h('label', { class: 'f' }, 'ID (optional)', u),
+      h('label', { class: 'f' }, 'New password', np), h('label', { class: 'f' }, 'Repeat new password', np2), err, btn);
+    form.addEventListener('submit', function (e) {
+      e.preventDefault(); err.textContent = '';
+      if (np.value !== np2.value) { err.textContent = 'The two passwords do not match.'; return; }
+      btn.disabled = true;
+      api('POST', '/api/auth', { action: 'reset', token: token, username: u.value.trim(), newPassword: np.value }).then(function (j) {
+        S.me = j; history.replaceState(null, '', location.pathname); return loadContent();
+      }).then(function () {
+        S.view = { name: 'page', slug: 'home' }; renderShell(); toast('Password updated.', 'ok');
+      }).catch(function (e2) { err.textContent = e2.message; btn.disabled = false; });
+    });
+    app.appendChild(h('div', { class: 'login' }, form));
+    np.focus();
   }
 
   // ---------- shell ----------
@@ -761,6 +807,8 @@
   }
 
   // ---------- boot ----------
+  var resetToken = new URLSearchParams(location.search).get('reset');
+  if (resetToken) { renderReset(resetToken); return; }
   api('GET', '/api/auth').then(function (j) {
     if (!j.loggedIn) return renderLogin();
     S.me = j;
