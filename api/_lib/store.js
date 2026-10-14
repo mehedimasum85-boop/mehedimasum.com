@@ -1,19 +1,73 @@
 'use strict';
-// Storage layer. On Vercel it uses a Blob store (BLOB_READ_WRITE_TOKEN). Locally (node dev-server.js)
-// it falls back to the .data folder so you can try the admin panel without any account.
+// Storage layer. Priority: Cloudflare R2 (R2_* env vars) > Vercel Blob > local .data folder
+// (local fallback lets you try the admin panel with node dev-server.js without any account).
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+
+// ---- Cloudflare R2 (S3-compatible) ----
+const R2 = {
+  account: process.env.R2_ACCOUNT_ID,
+  key: process.env.R2_ACCESS_KEY_ID,
+  secret: process.env.R2_SECRET_ACCESS_KEY,
+  bucket: process.env.R2_BUCKET,
+  pub: String(process.env.R2_PUBLIC_URL || '').replace(/\/+$/, '')
+};
+const useR2 = !!(R2.account && R2.key && R2.secret && R2.bucket && R2.pub);
 
 const TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
-const useBlob = !!(TOKEN || process.env.BLOB_STORE_ID);
+const useBlob = !useR2 && !!(TOKEN || process.env.BLOB_STORE_ID);
 const LOCAL = path.join(process.cwd(), '.data');
 
 function ensureConfigured() {
-  if (!useBlob && process.env.VERCEL) {
-    const e = new Error('Storage is not connected. In Vercel: Storage > Create a Blob store > Connect to this project, then redeploy.');
+  if (!useR2 && !useBlob && process.env.VERCEL) {
+    const e = new Error('Storage is not connected. Add the R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET and R2_PUBLIC_URL environment variables in Vercel, then redeploy.');
     e.status = 500;
     throw e;
   }
+}
+
+let _s3;
+function s3() {
+  if (_s3) return _s3;
+  const m = require('@aws-sdk/client-s3');
+  const client = new m.S3Client({
+    region: 'auto',
+    endpoint: 'https://' + R2.account + '.r2.cloudflarestorage.com',
+    credentials: { accessKeyId: R2.key, secretAccessKey: R2.secret }
+  });
+  _s3 = { client, m };
+  return _s3;
+}
+const r2Url = (key) => R2.pub + '/' + key.split('/').map(encodeURIComponent).join('/');
+
+async function r2List(prefix) {
+  const { client, m } = s3();
+  let token, out = [];
+  do {
+    const r = await client.send(new m.ListObjectsV2Command({ Bucket: R2.bucket, Prefix: prefix, ContinuationToken: token }));
+    (r.Contents || []).forEach((o) => out.push({ pathname: o.Key, url: r2Url(o.Key), size: o.Size, uploadedAt: new Date(o.LastModified).toISOString() }));
+    token = r.IsTruncated ? r.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
+async function r2Get(key) {
+  const { client, m } = s3();
+  try {
+    const r = await client.send(new m.GetObjectCommand({ Bucket: R2.bucket, Key: key }));
+    return await r.Body.transformToString();
+  } catch (e) {
+    if (e && (e.name === 'NoSuchKey' || (e.$metadata && e.$metadata.httpStatusCode === 404))) return null;
+    throw e;
+  }
+}
+async function r2Put(key, body, contentType, cacheControl) {
+  const { client, m } = s3();
+  await client.send(new m.PutObjectCommand({ Bucket: R2.bucket, Key: key, Body: body, ContentType: contentType, CacheControl: cacheControl }));
+}
+async function r2Delete(keys) {
+  const { client, m } = s3();
+  for (const k of keys) await client.send(new m.DeleteObjectCommand({ Bucket: R2.bucket, Key: k }));
 }
 
 const blobLib = () => import('@vercel/blob');
@@ -50,6 +104,12 @@ function localList(prefix) {
 // Read a JSON document stored under `key` (no extension). Returns null if missing.
 async function getJSON(key) {
   ensureConfigured();
+  if (useR2) {
+    const hit = newest((await r2List(key)).filter((b) => b.pathname.endsWith('.json')))[0];
+    if (!hit) return null;
+    const txt = await r2Get(hit.pathname);
+    return txt ? JSON.parse(txt) : null;
+  }
   if (useBlob) {
     const hit = newest((await listBlobs(key)).filter((b) => b.pathname.endsWith('.json')))[0];
     if (!hit) return null;
@@ -66,6 +126,15 @@ async function putJSON(key, obj, opts) {
   ensureConfigured();
   opts = opts || {};
   const body = JSON.stringify(obj);
+  if (useR2) {
+    const k = opts.secret ? key + '-' + crypto.randomBytes(12).toString('hex') + '.json' : key + '.json';
+    await r2Put(k, body, 'application/json', 'max-age=60');
+    if (opts.secret) {
+      const old = (await r2List(key)).filter((b) => b.pathname !== k && b.pathname.endsWith('.json')).map((b) => b.pathname);
+      if (old.length) await r2Delete(old);
+    }
+    return;
+  }
   if (useBlob) {
     const { put, del } = await blobLib();
     const before = opts.secret ? await listBlobs(key) : [];
@@ -84,11 +153,16 @@ async function putJSON(key, obj, opts) {
 
 async function listFiles(prefix) {
   ensureConfigured();
-  const items = useBlob ? await listBlobs(prefix) : localList(prefix);
+  const items = useR2 ? await r2List(prefix) : useBlob ? await listBlobs(prefix) : localList(prefix);
   return newest(items).map((b) => ({ pathname: b.pathname, url: b.url, size: b.size, uploadedAt: b.uploadedAt }));
 }
 
 async function fetchJSONByPathname(pathname) {
+  ensureConfigured();
+  if (useR2) {
+    const txt = await r2Get(pathname);
+    return txt ? JSON.parse(txt) : null;
+  }
   const hit = (await listFiles(pathname)).find((b) => b.pathname === pathname);
   if (!hit) return null;
   if (useBlob) return (await fetch(hit.url + '?t=' + Date.now(), { cache: 'no-store' })).json();
@@ -97,6 +171,7 @@ async function fetchJSONByPathname(pathname) {
 
 async function removeFiles(pathnames) {
   if (!pathnames.length) return;
+  if (useR2) { await r2Delete(pathnames); return; }
   if (useBlob) {
     const all = await listFiles(pathnames[0].split('/')[0] + '/');
     const urls = all.filter((b) => pathnames.includes(b.pathname)).map((b) => b.url);
@@ -109,6 +184,12 @@ async function removeFiles(pathnames) {
 // Save an uploaded image. Returns its public URL.
 async function putFile(pathname, buffer, contentType) {
   ensureConfigured();
+  if (useR2) {
+    const dot = pathname.lastIndexOf('.');
+    const k = (dot > pathname.lastIndexOf('/') ? pathname.slice(0, dot) : pathname) + '-' + crypto.randomBytes(5).toString('hex') + (dot > pathname.lastIndexOf('/') ? pathname.slice(dot) : '');
+    await r2Put(k, buffer, contentType, 'public, max-age=31536000, immutable');
+    return r2Url(k);
+  }
   if (useBlob) {
     const { put } = await blobLib();
     const r = await put(pathname, buffer, { access: 'public', contentType, addRandomSuffix: true, cacheControlMaxAge: 31536000 });
@@ -120,4 +201,4 @@ async function putFile(pathname, buffer, contentType) {
   return '/' + pathname;
 }
 
-module.exports = { getJSON, putJSON, listFiles, fetchJSONByPathname, removeFiles, putFile, useBlob, LOCAL };
+module.exports = { getJSON, putJSON, listFiles, fetchJSONByPathname, removeFiles, putFile, useBlob: useBlob || useR2, useR2, LOCAL };
