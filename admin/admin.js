@@ -336,14 +336,43 @@
       return file;
     });
   }
-  function uploadFile(file) {
-    return prepareImage(file).then(function (blob) {
-      return api('POST', '/api/upload?name=' + encodeURIComponent(file.name), blob, { 'Content-Type': blob.type || 'application/octet-stream' });
-    }).then(function (j) { return j.url; });
+  var VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?|#|$)/i;
+  function isVideo(u) { return VIDEO_RE.test(String(u || '')); }
+  function mediaThumb(u) {
+    return isVideo(u) ? h('video', { src: ru(u) + '#t=0.1', muted: true, preload: 'metadata', playsinline: true }) : h('img', { src: ru(u), alt: '' });
   }
-  function pickFiles(multiple) {
+  function typeOf(file) {
+    if (file.type) return file.type;
+    var m = /\.([a-z0-9]+)$/i.exec(file.name || '');
+    return ({ mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' })[m && m[1].toLowerCase()] || '';
+  }
+  // Send the file straight to R2 (original quality, no Vercel size limit).
+  function putDirect(uploadUrl, file, type, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var x = new XMLHttpRequest();
+      x.open('PUT', uploadUrl);
+      x.setRequestHeader('Content-Type', type);
+      x.upload.onprogress = function (e) { if (onProgress && e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100)); };
+      x.onload = function () { if (x.status >= 200 && x.status < 300) resolve(); else reject(new Error('Upload failed (' + x.status + '). Check the CORS policy of your R2 bucket.')); };
+      x.onerror = function () { reject(new Error('The browser blocked the upload. Add the CORS policy to your R2 bucket, then try again.')); };
+      x.send(file);
+    });
+  }
+  function uploadFile(file, onProgress) {
+    var type = typeOf(file);
+    return api('POST', '/api/upload?action=sign', { name: file.name, type: type, size: file.size }).then(function (j) {
+      if (j.direct) return putDirect(j.uploadUrl, file, type, onProgress).then(function () { return j.url; });
+      if (/^video\//.test(type)) throw new Error('Video upload needs Cloudflare R2 storage.');
+      // old path (no R2): compress to fit the 4.5 MB limit
+      return prepareImage(file).then(function (blob) {
+        return api('POST', '/api/upload?name=' + encodeURIComponent(file.name), blob, { 'Content-Type': blob.type || 'application/octet-stream' });
+      }).then(function (r) { return r.url; });
+    });
+  }
+  function pickFiles(multiple, kind) {
     return new Promise(function (res) {
-      var i = h('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp,image/gif,image/avif', multiple: !!multiple });
+      var accept = kind === 'video' ? 'video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v' : 'image/jpeg,image/png,image/webp,image/gif,image/avif';
+      var i = h('input', { type: 'file', accept: accept, multiple: !!multiple });
       i.addEventListener('change', function () { res(Array.prototype.slice.call(i.files)); });
       i.click();
     });
@@ -353,6 +382,7 @@
     var m = modal('Image library', h('div', { class: 'modal__body' }, h('p', { class: 'hint' }, 'Images you uploaded before. Click one to use it.'), grid));
     api('GET', '/api/upload').then(function (j) {
       grid.innerHTML = '';
+      j.items = j.items.filter(function (it) { return !isVideo(it.url) && it.url.indexOf('/uploads/_check/') === -1; });
       if (!j.items.length) grid.appendChild(h('p', { class: 'hint' }, 'No uploads yet.'));
       j.items.forEach(function (it) {
         grid.appendChild(h('button', { type: 'button', title: it.name, onclick: function () { m.close(); onPick(it.url); } }, h('img', { src: ru(it.url), alt: it.name, loading: 'lazy' })));
@@ -663,7 +693,7 @@
     if (!cats.length) body.appendChild(h('p', { class: 'hint' }, 'Add a category first.'));
     list.forEach(function (p) {
       var imgs = [].concat.apply([], p.slides || []);
-      var cover = p.cover || imgs[0];
+      var cover = p.cover || imgs.filter(function (u) { return !isVideo(u); })[0];
       body.appendChild(h('div', { class: 'proj' }, h('div', { class: 'thumb' }, cover ? h('img', { src: ru(cover), alt: '' }) : 'No cover'),
         h('div', { class: 'grow' }, h('div', { class: 'proj__t' }, p.title || 'Untitled'),
           h('div', { class: 'proj__m' }, (cats.filter(function (c) { return c.id === p.category; })[0] || { label: '(no category)' }).label + (p.brand ? ' \u00B7 ' + p.brand : '') + ' \u00B7 ' + imgs.length + ' images in ' + p.slides.length + ' slides')),
@@ -699,7 +729,7 @@
     sel.value = p.category; sel.addEventListener('change', function () { p.category = sel.value; touch(); });
     body.appendChild(h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Category', sel),
       h('label', { class: 'f' }, 'Image description (for screen readers)', (function () { var i = h('input', { class: 'in', type: 'text', value: p.alt || '' }); i.addEventListener('input', function () { p.alt = i.value; touch(); }); return i; })())));
-    body.appendChild(imageField('Cover image (the card on the Portfolio page)', p, 'cover', 'Best size 4000 x 3000 px (4:3). Leave empty to use the first slide image.'));
+    body.appendChild(imageField('Cover image (the card on the Portfolio page)', p, 'cover', 'Best size 4000 x 3000 px (4:3). Leave empty to use the first slide image. A project that has only videos needs a cover image.'));
     var ph = h('input', { type: 'checkbox', checked: !!p.placeholder });
     ph.addEventListener('change', function () { p.placeholder = ph.checked; touch(); });
     body.appendChild(h('label', { class: 'check' }, ph, 'Show "Placeholder" badge'));
@@ -716,12 +746,12 @@
       p.slides.forEach(function (sl, i) {
         var imgs = h('div', { class: 'slide__imgs' });
         sl.forEach(function (u, j) {
-          imgs.appendChild(h('div', { class: 'sthumb' }, h('img', { src: ru(u), alt: '' }),
+          imgs.appendChild(h('div', { class: 'sthumb' }, mediaThumb(u),
             h('button', { type: 'button', title: 'Remove image', onclick: function () { sl.splice(j, 1); if (!sl.length) p.slides.splice(i, 1); touch(); render(); } }, '\u2715')));
         });
         var row = h('div', { class: 'slide' }, h('span', { class: 'slide__n' }, String(i + 1)), imgs);
         var prog = h('span', { class: 'prog' });
-        if (sl.length < 3) {
+        if (sl.length < 3 && !sl.some(isVideo)) {
           imgs.appendChild(h('button', { class: 'addimg', type: 'button', onclick: function () {
             pickFiles(true).then(function (fs) {
               fs = fs.slice(0, 3 - sl.length);
@@ -755,7 +785,16 @@
                 render();
               });
           });
-        } }, 'Upload images'), prog2));
+        } }, 'Upload images'),
+        h('button', { class: 'btn btn--sm btn--primary', type: 'button', onclick: function () {
+          pickFiles(false, 'video').then(function (fs) {
+            if (!fs[0]) return;
+            prog2.textContent = 'Uploading video 0%...';
+            return uploadFile(fs[0], function (pct) { prog2.textContent = 'Uploading video ' + pct + '%...'; })
+              .then(function (u) { p.slides.push([u]); touch(); toast('Video added as a new slide.', 'ok'); render(); })
+              .catch(function (e) { prog2.textContent = ''; fail(e); });
+          });
+        } }, '+ Video (up to 1 GB)'), prog2));
     }
     render();
     return wrap;
@@ -804,6 +843,34 @@
       }).catch(function (e2) { err.textContent = e2.message; btn.disabled = false; if (e2.status === 401) fail(e2); });
     });
     view.appendChild(h('div', { class: 'card' }, form));
+
+    // storage check: keys, bucket, browser upload (CORS) and the public link
+    var out = h('div', {});
+    var chk = h('button', { class: 'btn btn--primary', type: 'button' }, 'Check storage and uploads');
+    function line(t, ok) { out.appendChild(h('p', { class: ok ? 'okmsg' : 'err' }, (ok ? '\u2713 ' : '\u2717 ') + t)); }
+    function pngBlob() {
+      var b = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), a = new Uint8Array(b.length);
+      for (var i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+      return new Blob([a], { type: 'image/png' });
+    }
+    function imgLoads(u) { return new Promise(function (res) { var im = new Image(); im.onload = function () { res(true); }; im.onerror = function () { res(false); }; im.src = u + '?t=' + Date.now(); }); }
+    chk.addEventListener('click', function () {
+      out.innerHTML = ''; chk.disabled = true;
+      api('POST', '/api/upload?action=check', {}).then(function (j) {
+        if (!j.direct) { line(j.message, false); return; }
+        if (!j.storageOk) { line(j.error, false); return; }
+        line('R2 keys and bucket are correct.', true);
+        return putDirect(j.uploadUrl, pngBlob(), 'image/png').then(function () {
+          line('Uploading from the browser works (CORS is correct). Images up to 100 MB and videos up to 1 GB can be uploaded.', true);
+          return imgLoads(j.url).then(function (ok) {
+            if (ok) line('The public link works, so visitors will see your uploads.', true);
+            else line('The test file uploaded, but its public link does not open. In Cloudflare: bucket Settings > Public Development URL > Enable, and check that R2_PUBLIC_URL is exactly that link.', false);
+          });
+        }, function (e) { line(e.message, false); });
+      }).catch(function (e) { line(e.message, false); if (e.status === 401) fail(e); }).then(function () { chk.disabled = false; });
+    });
+    view.appendChild(h('div', { class: 'card' }, h('div', { class: 'card__body' }, h('h2', {}, 'Storage check'),
+      h('p', { class: 'hint' }, 'Tests your Cloudflare R2 setup end to end. Run it once after changing storage settings.'), h('div', {}, chk), out)));
   }
 
   // ---------- boot ----------
