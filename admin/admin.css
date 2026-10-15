@@ -160,3 +160,13 @@ a.btn { text-decoration: none; color: var(--text); }
 .okmsg { color: #7ee2a8; font-size: .85rem; min-height: 1.2em; }
 
 .sthumb video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+
+.bgsec { display: grid; gap: .7rem; }
+.bgpicks { display: flex; flex-wrap: wrap; gap: 1rem; }
+.bgpick { display: grid; gap: .3rem; font-size: .8rem; color: var(--muted); font-weight: 600; }
+.bgpick input[type=color] { width: 72px; height: 42px; padding: 0; border: 1px solid var(--line2); border-radius: 10px; background: none; cursor: pointer; }
+.bgpresets { display: flex; flex-wrap: wrap; gap: .5rem; }
+.bgchip { min-width: 76px; height: 36px; border-radius: 10px; border: 1px solid var(--line2); cursor: pointer; color: #fff; font-size: .75rem; font-weight: 700; text-shadow: 0 1px 3px rgba(0, 0, 0, .7); }
+.bgchip:hover { border-color: var(--text); }
+.bgprev { position: sticky; top: 4.1rem; z-index: 3; box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .8); height: 170px; border-radius: 12px; border: 1px solid var(--line2); display: grid; place-items: center; overflow: hidden; transition: background .25s; }
+.bgprev img { max-height: 130px; max-width: 55%; border-radius: 6px; box-shadow: 0 14px 44px -10px rgba(0, 0, 0, .6); }
