@@ -64,8 +64,10 @@
     toast(e.message, 'err');
   }
 
+  var bgRefresh = null; // set while the project popup is open: repaints the background demo
   function touch() {
     if (!S.dirty) { S.dirty = true; updateTop(); }
+    if (bgRefresh) bgRefresh();
   }
   function updateTop() {
     Array.prototype.forEach.call(document.querySelectorAll('.js-save'), function (b) { b.disabled = !S.dirty; });
@@ -778,8 +780,71 @@
     var ph = h('input', { type: 'checkbox', checked: !!p.placeholder });
     ph.addEventListener('change', function () { p.placeholder = ph.checked; touch(); });
     body.appendChild(h('label', { class: 'check' }, ph, 'Show "Placeholder" badge'));
+    body.appendChild(bgSection(p));
     body.appendChild(slidesEditor(p));
-    modal(isNew ? 'New project' : 'Edit project', body, function () { renderShell(); }, true);
+    modal(isNew ? 'New project' : 'Edit project', body, function () { bgRefresh = null; renderShell(); }, true);
+  }
+
+  // ---------- preview background colours (per project) ----------
+  var BG_PRESETS = [
+    ['Ocean', ['#2a5d8f', '#1d4268', '#132c47']],
+    ['Forest', ['#2f6b57', '#235043', '#17372f']],
+    ['Violet', ['#5b4a8f', '#443770', '#2c2450']],
+    ['Rose', ['#8a4a65', '#693850', '#47273a']],
+    ['Sunset', ['#8a5a3c', '#6a3f35', '#432a36']],
+    ['Slate', ['#3d4b63', '#2c3850', '#1e2739']],
+    ['Sand', ['#8a7352', '#6a5a42', '#4a3f2f']]
+  ];
+  function bgSection(p) {
+    var wrap = h('div', { class: 'list bgsec' });
+    var prev, prevImg, note;
+    function gradient(c) { return 'linear-gradient(135deg, ' + c[0] + ', ' + c[1] + ' 55%, ' + c[2] + ')'; }
+    function custom() { return Array.isArray(p.bg) && p.bg.length === 3 ? p.bg : null; }
+    function firstImage() {
+      if (p.cover) return p.cover;
+      var all = [].concat.apply([], p.slides || []).filter(function (u) { return !isVideo(u); });
+      return all[0] || '';
+    }
+    function paint() { // live demo: runs on every colour change, before saving
+      if (!prev) return;
+      var c = custom();
+      prev.style.background = gradient(c || ['#11264a', '#0c1b38', '#0a1630']);
+      note.textContent = c ? 'This is how the preview popup will look on your website.' : 'Auto: the website picks soft colors from the image itself. The box below shows a plain example.';
+      var u = firstImage();
+      if (u) { prevImg.src = ru(u); prevImg.style.display = ''; } else prevImg.style.display = 'none';
+    }
+    function render() {
+      wrap.innerHTML = '';
+      var c = custom();
+      wrap.appendChild(h('div', { class: 'lbl' }, 'Preview background (the colors behind the images)'));
+      wrap.appendChild(h('div', { class: 'row' },
+        h('button', { class: 'btn btn--sm' + (c ? '' : ' btn--primary'), type: 'button', onclick: function () { if (!c) return; delete p.bg; touch(); render(); } }, 'Auto (from the image)'),
+        h('button', { class: 'btn btn--sm' + (c ? ' btn--primary' : ''), type: 'button', onclick: function () { if (c) return; p.bg = BG_PRESETS[0][1].slice(); touch(); render(); } }, 'Choose colors')));
+      note = h('p', { class: 'hint' }, '');
+      prevImg = h('img', { alt: '' });
+      prev = h('div', { class: 'bgprev' }, prevImg);
+      wrap.appendChild(note);
+      wrap.appendChild(prev); // the demo sits right here, above the pickers, so it is always visible while choosing
+      if (c) {
+        var picks = h('div', { class: 'bgpicks' });
+        ['Start', 'Middle', 'End'].forEach(function (label, i) {
+          var inp = h('input', { type: 'color', value: c[i] });
+          inp.addEventListener('input', function () { p.bg[i] = inp.value; touch(); paint(); });
+          picks.appendChild(h('label', { class: 'bgpick' }, label, inp));
+        });
+        wrap.appendChild(picks);
+        var chips = h('div', { class: 'bgpresets' });
+        BG_PRESETS.forEach(function (pr) {
+          chips.appendChild(h('button', { class: 'bgchip', type: 'button', title: pr[0], style: 'background:' + gradient(pr[1]), onclick: function () { p.bg = pr[1].slice(); touch(); render(); } }, pr[0]));
+        });
+        wrap.appendChild(h('div', { class: 'lbl' }, 'Or pick a ready-made one'));
+        wrap.appendChild(chips);
+      }
+      paint();
+    }
+    bgRefresh = paint;
+    render();
+    return wrap;
   }
 
   function slidesEditor(p) {
