@@ -278,16 +278,34 @@ window.PortfolioPage = (function () {
   var lbBadge = document.getElementById('lightbox-badge');
   var lbCount = document.getElementById('lightbox-count');
   var projIndex = 0, slideIndex = 0, opener = null;
+  // On phones every image gets its own slide (one at a time, in order). On bigger screens the slides stay as set in the admin (1 to 3 images each).
+  var mobileMQ = window.matchMedia ? window.matchMedia('(max-width: 640px)') : { matches: false };
+  var groups = [];
+  function groupsOf(p) {
+    if (!mobileMQ.matches) return p.slides;
+    return [].concat.apply([], p.slides).map(function (u) { return [u]; });
+  }
+  function groupFor(gs, imageIdx) { // which slide holds the n-th image of the project
+    var seen = 0;
+    for (var g = 0; g < gs.length; g++) { seen += gs[g].length; if (imageIdx < seen) return g; }
+    return Math.max(0, gs.length - 1);
+  }
+  function imageIndexOf(gs, slideIdx) { // number of images before this slide
+    var n = 0;
+    for (var g = 0; g < slideIdx && g < gs.length; g++) n += gs[g].length;
+    return n;
+  }
 
-  function loadProject(i) {
+  function loadProject(i, startImage) {
     var p = flat[i];
     if (!p) return;
     projIndex = i;
+    groups = groupsOf(p);
     track.innerHTML = '';
     dots.innerHTML = '';
-    var n = p.slides.length;
+    var n = groups.length;
 
-    p.slides.forEach(function (imgs, k) {
+    groups.forEach(function (imgs, k) {
       var s = el('div', 'lb__slide lb__slide--' + imgs.length);
       s.setAttribute('role', 'group');
       s.setAttribute('aria-roledescription', 'slide');
@@ -329,12 +347,12 @@ window.PortfolioPage = (function () {
     lbCat.textContent = catLabel(p.category);
     lbBadge.hidden = !p.placeholder;
     lbCount.textContent = 'Project ' + (i + 1) + ' / ' + flat.length;
-    goTo(0, true);
+    goTo(startImage ? groupFor(groups, startImage) : 0, true);
   }
 
   function goTo(k, instant) {
     var p = flat[projIndex];
-    var n = p.slides.length;
+    var n = groups.length;
     if (k < 0 || k >= n) return;
     slideIndex = k;
     if (instant) track.classList.add('no-anim');
@@ -346,8 +364,16 @@ window.PortfolioPage = (function () {
     btnNextImg.disabled = k === n - 1;
     lbImgCount.textContent = (k + 1) + ' / ' + n;
     Array.prototype.forEach.call(track.querySelectorAll('video'), function (v) { v.pause(); });
-    bg.src = isVideo(p.slides[k][0]) ? (p.cover || '') : p.slides[k][0];
   }
+
+  // Turning the phone (or resizing the window) switches between 1-per-slide and the admin layout. Keep the same image on screen.
+  function onLayoutChange() {
+    if (!dialog.hasAttribute('open') || !flat[projIndex]) return;
+    var imageIdx = imageIndexOf(groups, slideIndex);
+    loadProject(projIndex, imageIdx);
+  }
+  if (mobileMQ.addEventListener) mobileMQ.addEventListener('change', onLayoutChange);
+  else if (mobileMQ.addListener) mobileMQ.addListener(onLayoutChange);
 
   function changeProject(delta) {
     if (!flat.length) return;
@@ -388,7 +414,7 @@ window.PortfolioPage = (function () {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     if (e.target && e.target.tagName === 'VIDEO') return; // arrows seek inside the video
     var dir = e.key === 'ArrowLeft' ? -1 : 1;
-    if (flat[projIndex] && flat[projIndex].slides.length > 1) goTo(slideIndex + dir); else changeProject(dir);
+    if (groups.length > 1) goTo(slideIndex + dir); else changeProject(dir);
   });
 
   // Swipe on touch screens.
