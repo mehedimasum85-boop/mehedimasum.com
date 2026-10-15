@@ -21,6 +21,12 @@ window.PortfolioPage = (function () {
   // It is made darker/lighter than the images on purpose, so the images always stand out from it.
   // If the browser cannot read the pixels (the image host does not allow it), a neutral default is used.
   var DEFAULT_BG = ['#11264a', '#0c1b38', '#0a1630'];
+  // Colours chosen by hand in the admin (3 hex colours). Anything else means "pick automatically from the image".
+  function cleanBg(b) {
+    if (!Array.isArray(b) || b.length !== 3) return null;
+    for (var i = 0; i < 3; i++) if (!/^#[0-9a-f]{6}$/i.test(String(b[i]))) return null;
+    return b.slice();
+  }
   function rgbToHsl(r, g, b) {
     r /= 255; g /= 255; b /= 255;
     var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, h = 0, s = 0, d = mx - mn;
@@ -95,7 +101,8 @@ window.PortfolioPage = (function () {
       slides: slides,
       count: Math.max(1, all.length),
       alt: p.alt || p.title || '',
-      placeholder: !!p.placeholder
+      placeholder: !!p.placeholder,
+      bg: cleanBg(p.bg)
     };
   }).filter(function (p) { return p.cover; });
 
@@ -432,6 +439,8 @@ window.PortfolioPage = (function () {
   }
 
   function updateStageColors() {
+    var cur = flat[projIndex];
+    if (cur && cur.bg) return setStageColors(cur.bg); // colours picked by hand in the admin
     var s = track.children[slideIndex];
     if (!s) return setStageColors(null);
     var loaded = Array.prototype.filter.call(s.querySelectorAll('img'), function (im) { return im.complete && im.naturalWidth > 0; });
