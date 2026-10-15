@@ -16,6 +16,65 @@ window.PortfolioPage = (function () {
   function isVideo(u) { return /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(String(u || '')); }
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  // ---------- soft background colours taken from the images ----------
+  // The preview background is a calm gradient built from the colours of the images on screen.
+  // It is made darker/lighter than the images on purpose, so the images always stand out from it.
+  // If the browser cannot read the pixels (the image host does not allow it), a neutral default is used.
+  var DEFAULT_BG = ['#11264a', '#0c1b38', '#0a1630'];
+  function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, h = 0, s = 0, d = mx - mn;
+    if (d) {
+      s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+      h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      h *= 60;
+    }
+    return [h, s, l];
+  }
+  function hsl(h, s, l) { return 'hsl(' + Math.round((h % 360 + 360) % 360) + ', ' + Math.round(s * 100) + '%, ' + Math.round(l * 100) + '%)'; }
+  function paletteOf(imgs) {
+    var S = 40, c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    var ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingQuality = 'high';
+    var buckets = [], i, n = 0, lum = 0;
+    for (i = 0; i < 12; i++) buckets.push({ w: 0, r: 0, g: 0, b: 0 });
+    imgs.forEach(function (im) {
+      ctx.clearRect(0, 0, S, S);
+      ctx.drawImage(im, 0, 0, S, S);
+      var d = ctx.getImageData(0, 0, S, S).data; // throws if the image host does not allow reading
+      for (var k = 0; k < d.length; k += 4) {
+        if (d[k + 3] < 200) continue;
+        var q = rgbToHsl(d[k], d[k + 1], d[k + 2]);
+        n++; lum += q[2];
+        var w = q[1] * (1 - Math.abs(q[2] - 0.5) * 1.6); // colourful, mid-tone pixels count most
+        if (q[1] > 0.15 && w > 0.02) {
+          var b = buckets[Math.floor(q[0] / 30) % 12];
+          b.w += w; b.r += d[k] * w; b.g += d[k + 1] * w; b.b += d[k + 2] * w;
+        }
+      }
+    });
+    if (!n) return null;
+    var avgL = lum / n;
+    var hues = buckets.filter(function (b) { return b.w > 0; }).sort(function (a, b) { return b.w - a.w; }).slice(0, 3)
+      .map(function (b) { return rgbToHsl(b.r / b.w, b.g / b.w, b.b / b.w); });
+    // Bright/mid image -> deep background. Very dark image -> a softly lighter one. Either way the image stands out.
+    var light = avgL < 0.30;
+    var L = light ? Math.min(0.32, Math.max(0.26, avgL + 0.18)) : 0.16;
+    var base = hues.length ? hues[0] : [215, 0.2, 0.5];
+    function near(hh, d) { var x = Math.abs(((hh - base[0]) % 360 + 540) % 360 - 180); return x <= d; } // within d degrees of the main colour
+    var h2 = hues[1] && near(hues[1][0], 45) ? hues[1][0] : base[0] + 22;
+    var h3 = hues[2] && near(hues[2][0], 45) ? hues[2][0] : base[0] - 22;
+    var sat = hues.length ? (light ? Math.min(0.32, Math.max(0.2, base[1] * 0.45)) : Math.min(0.5, Math.max(0.28, base[1] * 0.55))) : 0.16; // calm, never loud
+    return [hsl(base[0], sat, L + 0.04), hsl(h2, sat, L), hsl(h3, sat, L - 0.04)];
+  }
+  function setStageColors(cols) {
+    cols = cols || DEFAULT_BG;
+    stage.style.setProperty('--g1', cols[0]);
+    stage.style.setProperty('--g2', cols[1]);
+    stage.style.setProperty('--g3', cols[2]);
+  }
+
   // ---------- tidy the data ----------
   var projects = ((data && data.projects) || []).map(function (p) {
     var slides = [];
@@ -177,9 +236,11 @@ window.PortfolioPage = (function () {
 
     var media = el('span', 'pf-card__media');
     var img = el('img');
+    img.crossOrigin = 'anonymous'; // lets the preview read this image's colours later (falls back below if the host refuses)
     img.src = p.cover; img.alt = p.alt; img.width = 4000; img.height = 3000;
     img.loading = 'lazy'; img.decoding = 'async';
     img.addEventListener('error', function () {
+      if (img.crossOrigin) { img.removeAttribute('crossorigin'); img.src = p.cover; return; }
       card.classList.add('is-broken');
       console.warn('Portfolio: image not found: ' + p.cover);
     });
@@ -323,10 +384,13 @@ window.PortfolioPage = (function () {
           return;
         }
         var im = el('img');
+        im.crossOrigin = 'anonymous';
         im.src = u;
         im.alt = p.alt + (n > 1 || imgs.length > 1 ? ' (slide ' + (k + 1) + ' of ' + n + (imgs.length > 1 ? ', image ' + (j + 1) : '') + ')' : '');
         im.draggable = false;
+        im.addEventListener('load', function () { if (s === track.children[slideIndex]) updateStageColors(); });
         im.addEventListener('error', function () {
+          if (im.crossOrigin) { im.removeAttribute('crossorigin'); im.src = u; return; } // host has no CORS: show the image anyway
           im.classList.add('is-broken');
           console.warn('Portfolio: image not found: ' + u);
         });
@@ -364,6 +428,20 @@ window.PortfolioPage = (function () {
     btnNextImg.disabled = k === n - 1;
     lbImgCount.textContent = (k + 1) + ' / ' + n;
     Array.prototype.forEach.call(track.querySelectorAll('video'), function (v) { v.pause(); });
+    updateStageColors();
+  }
+
+  function updateStageColors() {
+    var s = track.children[slideIndex];
+    if (!s) return setStageColors(null);
+    var loaded = Array.prototype.filter.call(s.querySelectorAll('img'), function (im) { return im.complete && im.naturalWidth > 0; });
+    if (!loaded.length) return setStageColors(null);
+    var key = loaded.length;
+    if (s._palKey !== key) {
+      s._palKey = key;
+      try { s._pal = paletteOf(loaded); } catch (e) { s._pal = null; } // blocked by the image host: use the default
+    }
+    setStageColors(s._pal);
   }
 
   // Turning the phone (or resizing the window) switches between 1-per-slide and the admin layout. Keep the same image on screen.
