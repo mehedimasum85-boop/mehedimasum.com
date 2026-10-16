@@ -560,6 +560,7 @@
     side.appendChild(h('button', { class: 'nav-btn', type: 'button', onclick: newPage }, '+ New page'));
     side.appendChild(h('div', { class: 'side__group' }, 'Content'));
     side.appendChild(nav('Portfolio projects', { name: 'portfolio' }));
+    side.appendChild(nav('Library', { name: 'library' }, 'images, videos'));
     side.appendChild(nav('Site settings', { name: 'site' }, 'menu, footer'));
     side.appendChild(h('div', { class: 'side__group' }, 'Tools'));
     side.appendChild(nav('History', { name: 'history' }, 'restore'));
@@ -568,7 +569,7 @@
       h('a', { class: 'btn btn--sm', href: '/', target: '_blank', rel: 'noopener' }, 'Open live site'),
       h('button', { class: 'btn btn--sm', type: 'button', onclick: logout }, 'Log out')));
 
-    var titles = { page: pageLabel(v.slug || 'home'), portfolio: 'Portfolio projects', site: 'Site settings', history: 'History', account: 'Account' };
+    var titles = { page: pageLabel(v.slug || 'home'), portfolio: 'Portfolio projects', library: 'Library', site: 'Site settings', history: 'History', account: 'Account' };
     var top = h('header', { class: 'top' },
       h('button', { class: 'icon menu-btn', type: 'button', 'aria-label': 'Menu', onclick: function () { side.classList.toggle('is-open'); } }, '\u2630'),
       h('h1', {}, titles[v.name]), h('span', { id: 'state', class: 'state' }),
@@ -578,7 +579,7 @@
     app.appendChild(h('div', { class: 'shell' }, side, h('div', { class: 'main' }, top, view)));
     updateTop();
     if (S.me.mustChange && v.name !== 'account') view.appendChild(h('div', { class: 'banner' }, 'You are still using the demo password. Open the Account page and change it, otherwise you will not be able to save.'));
-    ({ page: renderPage, portfolio: renderPortfolio, site: renderSite, history: renderHistory, account: renderAccount })[v.name](view);
+    ({ page: renderPage, portfolio: renderPortfolio, library: renderLibrary, site: renderSite, history: renderHistory, account: renderAccount })[v.name](view);
     window.scrollTo(0, 0);
   }
 
@@ -785,6 +786,127 @@
     modal(isNew ? 'New project' : 'Edit project', body, function () { bgRefresh = null; renderShell(); }, true);
   }
 
+  // ---------- small colour picker (no browser eyedropper, no zoom) ----------
+  function hexToRgb(t) { var m = /^#?([0-9a-f]{6})$/i.exec(String(t || '')); if (!m) return null; var n = parseInt(m[1], 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+  function rgbToHex(r, g, b) { return '#' + [r, g, b].map(function (v) { return ('0' + Math.round(Math.max(0, Math.min(255, v))).toString(16)).slice(-2); }).join(''); }
+  function normHex(t) {
+    t = String(t || '').trim().replace(/^#/, '');
+    if (/^[0-9a-f]{3}$/i.test(t)) t = t.split('').map(function (c) { return c + c; }).join('');
+    return /^[0-9a-f]{6}$/i.test(t) ? '#' + t.toLowerCase() : null;
+  }
+  function rgbToHsv(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, hh = 0;
+    if (d) { hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; hh *= 60; if (hh < 0) hh += 360; }
+    return [hh, mx ? d / mx : 0, mx];
+  }
+  function hsvToRgb(hh, s, v) {
+    var c = v * s, x = c * (1 - Math.abs((hh / 60) % 2 - 1)), m = v - c, r = 0, g = 0, b = 0;
+    if (hh < 60) { r = c; g = x; } else if (hh < 120) { r = x; g = c; } else if (hh < 180) { g = c; b = x; }
+    else if (hh < 240) { g = x; b = c; } else if (hh < 300) { r = x; b = c; } else { r = c; b = x; }
+    return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+  }
+  // up to 6 main colours of an image (read from the file, no zoom tool needed)
+  var imgColorCache = {};
+  function imageColors(url) {
+    if (imgColorCache[url]) return imgColorCache[url];
+    imgColorCache[url] = fetch(ru(url), { mode: 'cors', cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('x'); return r.blob();
+    }).then(function (b) { return createImageBitmap(b); }).then(function (bm) {
+      var S = 48, c = document.createElement('canvas'); c.width = S; c.height = S;
+      var x = c.getContext('2d', { willReadFrequently: true });
+      x.drawImage(bm, 0, 0, S, S);
+      var d = x.getImageData(0, 0, S, S).data, bins = {}, i;
+      for (i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 200) continue;
+        var k = ((d[i] >> 4) << 8) | ((d[i + 1] >> 4) << 4) | (d[i + 2] >> 4);
+        var bn = bins[k] || (bins[k] = { n: 0, r: 0, g: 0, b: 0 });
+        bn.n++; bn.r += d[i]; bn.g += d[i + 1]; bn.b += d[i + 2];
+      }
+      var list = Object.keys(bins).map(function (k2) { return bins[k2]; }).sort(function (a, b) { return b.n - a.n; }), out = [];
+      list.forEach(function (bn) {
+        if (out.length >= 6) return;
+        var col = [bn.r / bn.n, bn.g / bn.n, bn.b / bn.n];
+        var far = out.every(function (o) { return Math.abs(o[0] - col[0]) + Math.abs(o[1] - col[1]) + Math.abs(o[2] - col[2]) > 90; });
+        if (far) out.push(col);
+      });
+      return out.map(function (o) { return rgbToHex(o[0], o[1], o[2]); });
+    }).catch(function () { delete imgColorCache[url]; return []; });
+    return imgColorCache[url];
+  }
+  var openPop = null;
+  function closePop() { if (openPop) { openPop.pop.hidden = true; openPop.sw.classList.remove('is-open'); openPop = null; } }
+  if (!window.__cpInit) {
+    window.__cpInit = true;
+    document.addEventListener('pointerdown', function (e) { if (openPop && !e.target.closest('.cppop') && !e.target.closest('.cpswatch')) closePop(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && openPop) { closePop(); e.stopPropagation(); } }, true);
+  }
+  function colorField(label, start, onChange, getImage) {
+    var cur = start, hsv = rgbToHsv.apply(null, hexToRgb(start) || [0, 0, 0]);
+    var sw = h('button', { class: 'cpswatch', type: 'button', title: 'Choose a color', 'aria-label': label + ' color' });
+    sw.style.background = cur;
+    var hx = h('input', { class: 'in cphex', type: 'text', value: cur, maxlength: 7, spellcheck: false, autocomplete: 'off', 'aria-label': label + ' color code', placeholder: '#rrggbb' });
+    var pop = null, svEl, dot, hue, chipsBox;
+    function apply(hex, fromTyping) {
+      cur = hex; sw.style.background = hex;
+      if (!fromTyping) hx.value = hex;
+      hx.classList.remove('bad');
+      onChange(hex);
+    }
+    function paintPop() {
+      if (!pop) return;
+      svEl.style.background = 'linear-gradient(to top, #000, rgba(0,0,0,0)), linear-gradient(to right, #fff, hsl(' + Math.round(hsv[0]) + ', 100%, 50%))';
+      dot.style.left = (hsv[1] * 100) + '%'; dot.style.top = ((1 - hsv[2]) * 100) + '%';
+      hue.value = Math.round(hsv[0]);
+    }
+    function fromHsv() { var rgb = hsvToRgb(hsv[0], hsv[1], hsv[2]); apply(rgbToHex(rgb[0], rgb[1], rgb[2])); paintPop(); }
+    function setHex(hex) { hsv = rgbToHsv.apply(null, hexToRgb(hex)); apply(hex); paintPop(); }
+    function build() {
+      svEl = h('div', { class: 'cpsv' }); dot = h('div', { class: 'cpdot' }); svEl.appendChild(dot);
+      function move(e) {
+        var r = svEl.getBoundingClientRect();
+        hsv[1] = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+        hsv[2] = 1 - Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+        fromHsv();
+      }
+      svEl.addEventListener('pointerdown', function (e) { svEl.setPointerCapture(e.pointerId); move(e); svEl.onpointermove = move; });
+      svEl.addEventListener('pointerup', function () { svEl.onpointermove = null; });
+      hue = h('input', { class: 'cphue', type: 'range', min: 0, max: 359, step: 1, 'aria-label': 'Shade' });
+      hue.addEventListener('input', function () { hsv[0] = Number(hue.value); if (hsv[1] === 0) hsv[1] = 0.5; if (hsv[2] === 0) hsv[2] = 0.5; fromHsv(); });
+      chipsBox = h('div', { class: 'cpchips' });
+      pop = h('div', { class: 'cppop' }, svEl, hue, h('div', { class: 'cplbl', hidden: true }, 'Colors from your image'), chipsBox);
+      pop.hidden = true;
+      var lbl = pop.querySelector('.cplbl');
+      var url = getImage();
+      if (url) imageColors(url).then(function (cols) {
+        if (!cols.length) return;
+        lbl.hidden = false;
+        cols.forEach(function (c) {
+          var chip = h('button', { class: 'cpchip', type: 'button', title: c });
+          chip.style.background = c;
+          chip.addEventListener('click', function () { setHex(c); });
+          chipsBox.appendChild(chip);
+        });
+      });
+      return pop;
+    }
+    sw.addEventListener('click', function () {
+      if (openPop && openPop.sw === sw) { closePop(); return; }
+      closePop();
+      if (!pop) wrap.appendChild(build());
+      pop.hidden = false; sw.classList.add('is-open'); openPop = { pop: pop, sw: sw };
+      paintPop();
+    });
+    hx.addEventListener('input', function () {
+      var n = normHex(hx.value);
+      if (!n) { hx.classList.add('bad'); return; }
+      hsv = rgbToHsv.apply(null, hexToRgb(n)); apply(n, true); paintPop();
+    });
+    hx.addEventListener('blur', function () { hx.value = cur; hx.classList.remove('bad'); });
+    var wrap = h('div', { class: 'bgpick' }, h('span', { class: 'cplbl' }, label), h('div', { class: 'cprow' }, sw, hx));
+    return wrap;
+  }
+
   // ---------- preview background colours (per project) ----------
   var BG_PRESETS = [
     ['Ocean', ['#2a5d8f', '#1d4268', '#132c47']],
@@ -820,6 +942,7 @@
       wrap.appendChild(h('div', { class: 'row' },
         h('button', { class: 'btn btn--sm' + (c ? '' : ' btn--primary'), type: 'button', onclick: function () { if (!c) return; delete p.bg; touch(); render(); } }, 'Auto (from the image)'),
         h('button', { class: 'btn btn--sm' + (c ? ' btn--primary' : ''), type: 'button', onclick: function () { if (c) return; p.bg = BG_PRESETS[0][1].slice(); touch(); render(); } }, 'Choose colors')));
+      closePop();
       note = h('p', { class: 'hint' }, '');
       prevImg = h('img', { alt: '' });
       prev = h('div', { class: 'bgprev' }, prevImg);
@@ -828,9 +951,7 @@
       if (c) {
         var picks = h('div', { class: 'bgpicks' });
         ['Start', 'Middle', 'End'].forEach(function (label, i) {
-          var inp = h('input', { type: 'color', value: c[i] });
-          inp.addEventListener('input', function () { p.bg[i] = inp.value; touch(); paint(); });
-          picks.appendChild(h('label', { class: 'bgpick' }, label, inp));
+          picks.appendChild(colorField(label, c[i], function (hex) { p.bg[i] = hex; touch(); paint(); }, firstImage));
         });
         wrap.appendChild(picks);
         var chips = h('div', { class: 'bgpresets' });
@@ -930,6 +1051,93 @@
           } }, 'Load into editor')));
       });
     }).catch(fail);
+  }
+
+  // ---------- library: every uploaded file, with size, and delete ----------
+  function fmtSize(b) {
+    b = Number(b) || 0;
+    if (b >= 1048576) return (b / 1048576).toFixed(b >= 10485760 ? 1 : 2) + ' MB';
+    return Math.max(1, Math.round(b / 1024)) + ' KB';
+  }
+  function renderLibrary(view) {
+    var items = [], selected = {}, filter = 'all';
+    var usedText = JSON.stringify(S.content); // a file counts as "in use" if its address appears anywhere in your content (even unsaved edits)
+    function isUsed(it) { return usedText.indexOf(it.url) !== -1; }
+    var summary = h('p', { class: 'hint' }, 'Loading...');
+    var listEl = h('div', { class: 'liblist' });
+    var tools = h('div', { class: 'libtools' });
+    view.appendChild(h('div', { class: 'card' }, h('div', { class: 'card__body' },
+      h('h2', {}, 'Uploaded files'),
+      h('p', { class: 'hint' }, 'Every image and video you uploaded. Tick the files you do not need and delete them to free up space. Deleting here happens immediately, you do not need to click Save changes.'),
+      summary, tools, listEl)));
+
+    function visible() {
+      return items.filter(function (it) {
+        if (filter === 'images') return !isVideo(it.url);
+        if (filter === 'videos') return isVideo(it.url);
+        if (filter === 'unused') return !isUsed(it);
+        return true;
+      });
+    }
+    function chosen() { return items.filter(function (it) { return selected[it.pathname]; }); }
+    function drawTools() {
+      tools.innerHTML = '';
+      var vis = visible(), sel = chosen();
+      var all = h('input', { type: 'checkbox', 'aria-label': 'Select all shown files' });
+      all.checked = vis.length > 0 && vis.every(function (it) { return selected[it.pathname]; });
+      all.addEventListener('change', function () { vis.forEach(function (it) { if (all.checked) selected[it.pathname] = true; else delete selected[it.pathname]; }); draw(); });
+      tools.appendChild(h('label', { class: 'libsel' }, all, 'Select all'));
+      [['all', 'All'], ['images', 'Images'], ['videos', 'Videos'], ['unused', 'Not used']].forEach(function (f) {
+        tools.appendChild(h('button', { class: 'chip' + (filter === f[0] ? ' is-on' : ''), type: 'button', onclick: function () { filter = f[0]; draw(); } }, f[1]));
+      });
+      var total = sel.reduce(function (n, it) { return n + (it.size || 0); }, 0);
+      tools.appendChild(h('span', { class: 'grow' }));
+      if (sel.length) tools.appendChild(h('span', { class: 'hint' }, sel.length + ' selected, ' + fmtSize(total)));
+      var del = h('button', { class: 'btn btn--sm btn--danger', type: 'button', onclick: remove }, 'Delete selected' + (sel.length ? ' (' + sel.length + ')' : ''));
+      del.disabled = !sel.length;
+      tools.appendChild(del);
+    }
+    function draw() {
+      var all = items.reduce(function (n, it) { return n + (it.size || 0); }, 0);
+      summary.textContent = items.length ? items.length + ' file' + (items.length > 1 ? 's' : '') + ', ' + fmtSize(all) + ' in total' : 'No uploads yet.';
+      drawTools();
+      listEl.innerHTML = '';
+      var vis = visible();
+      if (items.length && !vis.length) listEl.appendChild(h('p', { class: 'hint' }, 'No files in this view.'));
+      vis.forEach(function (it) {
+        var used = isUsed(it);
+        var cb = h('input', { type: 'checkbox', 'aria-label': 'Select ' + it.name });
+        cb.checked = !!selected[it.pathname];
+        cb.addEventListener('change', function () { if (cb.checked) selected[it.pathname] = true; else delete selected[it.pathname]; row.classList.toggle('is-sel', cb.checked); drawTools(); });
+        var row = h('label', { class: 'librow' + (cb.checked ? ' is-sel' : '') }, cb,
+          h('div', { class: 'libthumb' }, mediaThumb(it.url)),
+          h('div', { class: 'libinfo' }, h('div', { class: 'libname' }, it.name),
+            h('div', { class: 'hint' }, fmtSize(it.size) + (it.uploadedAt ? '  \u00b7  ' + new Date(it.uploadedAt).toLocaleDateString() : ''))),
+          h('span', { class: 'libbadge' + (used ? ' is-used' : '') }, used ? 'In use' : 'Not used'));
+        listEl.appendChild(row);
+      });
+    }
+    function load() {
+      return api('GET', '/api/upload').then(function (j) {
+        items = (j.items || []).filter(function (it) { return it.pathname && it.pathname.indexOf('uploads/_check/') === -1; });
+        draw();
+      }).catch(function (e) { summary.textContent = ''; fail(e); });
+    }
+    function remove() {
+      var sel = chosen();
+      if (!sel.length) return;
+      var used = sel.filter(isUsed).length;
+      var total = sel.reduce(function (n, it) { return n + (it.size || 0); }, 0);
+      var msg = 'Delete ' + sel.length + ' file' + (sel.length > 1 ? 's' : '') + ' (' + fmtSize(total) + ')? This cannot be undone.';
+      if (used) msg += '\n\n' + used + ' of them ' + (used > 1 ? 'are' : 'is') + ' still used on your website. Those images or videos will stop showing.';
+      if (!confirm(msg)) return;
+      api('POST', '/api/upload?action=delete', { paths: sel.map(function (it) { return it.pathname; }) }).then(function (j) {
+        toast('Deleted ' + j.deleted + ' file' + (j.deleted > 1 ? 's' : '') + '.', 'ok');
+        selected = {};
+        return load();
+      }).catch(fail);
+    }
+    load();
   }
 
   // ---------- account ----------
