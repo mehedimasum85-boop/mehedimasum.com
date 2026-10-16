@@ -215,3 +215,11 @@ a.btn { text-decoration: none; color: var(--text); }
 .cptip { position: absolute; z-index: 2; pointer-events: none; display: flex; align-items: center; gap: .4rem; padding: .2rem .6rem .2rem .25rem; background: rgba(5, 11, 24, .96); border: 1px solid var(--line2); border-radius: 999px; font: 700 .75rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
 .cptip[hidden] { display: none; }
 .cptip__sw { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff; }
+
+.modal--confirm { z-index: 160; place-items: center; }
+.confirm { width: min(440px, 92vw); }
+.confirm__body { padding: 1rem 1.1rem 1.1rem; display: grid; gap: 1rem; }
+.confirm__text { margin: 0; white-space: pre-line; line-height: 1.55; }
+.confirm__btns { justify-content: flex-end; gap: .6rem; }
+.btn--solid.btn--danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn--solid.btn--danger:hover { filter: brightness(1.1); }
