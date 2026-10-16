@@ -806,13 +806,22 @@
     else if (hh < 240) { g = x; b = c; } else if (hh < 300) { r = x; b = c; } else { r = c; b = x; }
     return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
   }
-  // up to 6 main colours of an image (read from the file, no zoom tool needed)
-  var imgColorCache = {};
-  function imageColors(url) {
-    if (imgColorCache[url]) return imgColorCache[url];
-    imgColorCache[url] = fetch(ru(url), { mode: 'cors', cache: 'no-store' }).then(function (r) {
+  // the project's image, read from the file itself (so the browser lets us look at its pixels). Cached per address.
+  var bitmapCache = {};
+  var PIPETTE = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>';
+  function loadBitmap(url) {
+    if (bitmapCache[url]) return bitmapCache[url];
+    bitmapCache[url] = fetch(ru(url), { mode: 'cors', cache: 'no-store' }).then(function (r) {
       if (!r.ok) throw new Error('x'); return r.blob();
-    }).then(function (b) { return createImageBitmap(b); }).then(function (bm) {
+    }).then(function (blob) {
+      return createImageBitmap(blob, { resizeWidth: 640, resizeQuality: 'medium' }).catch(function () { return createImageBitmap(blob); });
+    }).catch(function () { delete bitmapCache[url]; return null; });
+    return bitmapCache[url];
+  }
+  // up to 6 main colours of an image
+  function imageColors(url) {
+    return loadBitmap(url).then(function (bm) {
+      if (!bm) return [];
       var S = 48, c = document.createElement('canvas'); c.width = S; c.height = S;
       var x = c.getContext('2d', { willReadFrequently: true });
       x.drawImage(bm, 0, 0, S, S);
@@ -831,22 +840,22 @@
         if (far) out.push(col);
       });
       return out.map(function (o) { return rgbToHex(o[0], o[1], o[2]); });
-    }).catch(function () { delete imgColorCache[url]; return []; });
-    return imgColorCache[url];
+    });
   }
   var openPop = null;
-  function closePop() { if (openPop) { openPop.pop.hidden = true; openPop.sw.classList.remove('is-open'); openPop = null; } }
+  function closePop() { if (openPop) { if (openPop.reset) openPop.reset(); openPop.pop.hidden = true; openPop.sw.classList.remove('is-open'); openPop = null; } }
   if (!window.__cpInit) {
     window.__cpInit = true;
-    document.addEventListener('pointerdown', function (e) { if (openPop && !e.target.closest('.cppop') && !e.target.closest('.cpswatch')) closePop(); });
+    document.addEventListener('pointerdown', function (e) { if (openPop && !e.target.closest('.cppop') && !e.target.closest('.cpswatch') && !e.target.closest('.cpeye')) closePop(); });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && openPop) { closePop(); e.stopPropagation(); } }, true);
   }
   function colorField(label, start, onChange, getImage) {
     var cur = start, hsv = rgbToHsv.apply(null, hexToRgb(start) || [0, 0, 0]);
     var sw = h('button', { class: 'cpswatch', type: 'button', title: 'Choose a color', 'aria-label': label + ' color' });
     sw.style.background = cur;
+    var eye = h('button', { class: 'cpeye', type: 'button', title: 'Eyedropper: pick a color from your image', 'aria-label': label + ' eyedropper', html: PIPETTE });
     var hx = h('input', { class: 'in cphex', type: 'text', value: cur, maxlength: 7, spellcheck: false, autocomplete: 'off', 'aria-label': label + ' color code', placeholder: '#rrggbb' });
-    var pop = null, svEl, dot, hue, chipsBox;
+    var pop = null, svEl, dot, hue, chipsBox, pickBox, imgBtn;
     function apply(hex, fromTyping) {
       cur = hex; sw.style.background = hex;
       if (!fromTyping) hx.value = hex;
@@ -860,7 +869,50 @@
       hue.value = Math.round(hsv[0]);
     }
     function fromHsv() { var rgb = hsvToRgb(hsv[0], hsv[1], hsv[2]); apply(rgbToHex(rgb[0], rgb[1], rgb[2])); paintPop(); }
-    function setHex(hex) { hsv = rgbToHsv.apply(null, hexToRgb(hex)); apply(hex); paintPop(); }
+    function setHex(hex) { if (!hex) return; hsv = rgbToHsv.apply(null, hexToRgb(hex)); apply(hex); paintPop(); }
+
+    // eyedropper on the project's own image: hover shows the colour under the pointer, click takes it. No zoom.
+    function showPick(on) {
+      if (!pop) return;
+      pickBox.hidden = !on; pop.classList.toggle('wide', on); imgBtn.classList.toggle('btn--primary', on);
+      pickBox.innerHTML = '';
+      if (!on) return;
+      var msg = function (t) { pickBox.innerHTML = ''; pickBox.appendChild(h('p', { class: 'hint' }, t)); };
+      var url = getImage();
+      if (!url) return msg('Add a cover image first, then you can pick colors from it.');
+      msg('Loading your image...');
+      loadBitmap(url).then(function (bm) {
+        if (pickBox.hidden) return;
+        if (!bm) return msg('This image cannot be read here (its host does not allow it). Use the color square, the code box or "Pick from screen" instead.');
+        pickBox.innerHTML = '';
+        pickBox.appendChild(h('p', { class: 'hint' }, 'Move over the image and click the color you want.'));
+        var cv = h('canvas', { class: 'cpcanvas' }); cv.width = bm.width; cv.height = bm.height;
+        var ctx = cv.getContext('2d', { willReadFrequently: true }); ctx.drawImage(bm, 0, 0);
+        var tipSw = h('span', { class: 'cptip__sw' }), tipHex = h('span', {}, '');
+        var tip = h('div', { class: 'cptip', hidden: true }, tipSw, tipHex);
+        var holder = h('div', { class: 'cpholder' }, cv, tip);
+        function sample(e) {
+          var r = cv.getBoundingClientRect();
+          var x = Math.max(0, Math.min(cv.width - 1, Math.round((e.clientX - r.left) * cv.width / r.width)));
+          var y = Math.max(0, Math.min(cv.height - 1, Math.round((e.clientY - r.top) * cv.height / r.height)));
+          var x0 = Math.max(0, x - 1), y0 = Math.max(0, y - 1), w = Math.min(3, cv.width - x0), hh = Math.min(3, cv.height - y0);
+          var d = ctx.getImageData(x0, y0, w, hh).data, rr = 0, gg = 0, bb = 0, n = 0;
+          for (var i = 0; i < d.length; i += 4) { rr += d[i]; gg += d[i + 1]; bb += d[i + 2]; n++; }
+          return { hex: rgbToHex(rr / n, gg / n, bb / n), px: e.clientX - r.left, py: e.clientY - r.top };
+        }
+        cv.addEventListener('pointermove', function (e) {
+          var s = sample(e);
+          tip.hidden = false; tipSw.style.background = s.hex; tipHex.textContent = s.hex;
+          tip.style.left = Math.max(0, Math.min(s.px + 14, holder.clientWidth - 98)) + 'px';
+          tip.style.top = Math.max(0, s.py - 36) + 'px';
+        });
+        cv.addEventListener('pointerleave', function () { tip.hidden = true; });
+        cv.addEventListener('click', function (e) { setHex(sample(e).hex); showPick(false); });
+        pickBox.appendChild(holder);
+        pop.scrollIntoView({ block: 'nearest' });
+      });
+    }
+
     function build() {
       svEl = h('div', { class: 'cpsv' }); dot = h('div', { class: 'cpdot' }); svEl.appendChild(dot);
       function move(e) {
@@ -873,8 +925,17 @@
       svEl.addEventListener('pointerup', function () { svEl.onpointermove = null; });
       hue = h('input', { class: 'cphue', type: 'range', min: 0, max: 359, step: 1, 'aria-label': 'Shade' });
       hue.addEventListener('input', function () { hsv[0] = Number(hue.value); if (hsv[1] === 0) hsv[1] = 0.5; if (hsv[2] === 0) hsv[2] = 0.5; fromHsv(); });
+      imgBtn = h('button', { class: 'btn btn--sm cpbtn', type: 'button', title: 'Pick a color from your image', html: PIPETTE + '<span>Pick from image</span>' });
+      imgBtn.addEventListener('click', function () { showPick(pickBox.hidden); });
+      var tools = h('div', { class: 'row' }, imgBtn);
+      if (window.EyeDropper) { // the browser's own screen eyedropper (Chrome / Edge), for colors outside the image
+        var scr = h('button', { class: 'btn btn--sm cpbtn', type: 'button', title: 'Pick any color on your screen (the browser shows its own magnifier)', html: PIPETTE + '<span>Pick from screen</span>' });
+        scr.addEventListener('click', function () { new window.EyeDropper().open().then(function (r) { setHex(normHex(r.sRGBHex)); }).catch(function () {}); });
+        tools.appendChild(scr);
+      }
+      pickBox = h('div', { class: 'cppick', hidden: true });
       chipsBox = h('div', { class: 'cpchips' });
-      pop = h('div', { class: 'cppop' }, svEl, hue, h('div', { class: 'cplbl', hidden: true }, 'Colors from your image'), chipsBox);
+      pop = h('div', { class: 'cppop' }, tools, pickBox, svEl, hue, h('div', { class: 'cplbl', hidden: true }, 'Colors from your image'), chipsBox);
       pop.hidden = true;
       var lbl = pop.querySelector('.cplbl');
       var url = getImage();
@@ -890,20 +951,24 @@
       });
       return pop;
     }
-    sw.addEventListener('click', function () {
-      if (openPop && openPop.sw === sw) { closePop(); return; }
-      closePop();
+    function openIt() {
       if (!pop) wrap.appendChild(build());
-      pop.hidden = false; sw.classList.add('is-open'); openPop = { pop: pop, sw: sw };
+      if (openPop && openPop.sw === sw) return;
+      closePop();
+      pop.hidden = false; sw.classList.add('is-open');
+      openPop = { pop: pop, sw: sw, reset: function () { showPick(false); } };
       paintPop();
-    });
+      setTimeout(function () { pop.scrollIntoView({ block: 'nearest' }); }, 0);
+    }
+    sw.addEventListener('click', function () { if (openPop && openPop.sw === sw) { closePop(); return; } openIt(); });
+    eye.addEventListener('click', function () { openIt(); showPick(true); });
     hx.addEventListener('input', function () {
       var n = normHex(hx.value);
       if (!n) { hx.classList.add('bad'); return; }
       hsv = rgbToHsv.apply(null, hexToRgb(n)); apply(n, true); paintPop();
     });
     hx.addEventListener('blur', function () { hx.value = cur; hx.classList.remove('bad'); });
-    var wrap = h('div', { class: 'bgpick' }, h('span', { class: 'cplbl' }, label), h('div', { class: 'cprow' }, sw, hx));
+    var wrap = h('div', { class: 'bgpick' }, h('span', { class: 'cplbl' }, label), h('div', { class: 'cprow' }, sw, hx, eye));
     return wrap;
   }
 
