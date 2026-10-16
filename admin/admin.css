@@ -203,3 +203,15 @@ a.btn { text-decoration: none; color: var(--text); }
 .libbadge { font-size: .75rem; font-weight: 700; padding: .25rem .65rem; border-radius: 999px; border: 1px solid var(--line2); color: var(--muted); white-space: nowrap; }
 .libbadge.is-used { color: var(--ok); border-color: rgba(53, 212, 154, .5); }
 @media (max-width: 640px) { .libthumb { width: 64px; height: 50px; } .libbadge { display: none; } }
+
+.cpeye { width: 40px; height: 40px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 10px; border: 1px solid var(--line2); background: var(--panel2); color: var(--text); cursor: pointer; }
+.cpeye:hover { border-color: var(--cyan); color: var(--cyan); }
+.cpbtn { display: inline-flex; align-items: center; gap: .4rem; }
+.cppop.wide { width: min(340px, 88vw); }
+.cppick { display: grid; gap: .4rem; }
+.cppick[hidden] { display: none; }
+.cpholder { position: relative; display: block; width: fit-content; max-width: 100%; margin: 0 auto; }
+.cpcanvas { display: block; width: auto; height: auto; max-width: 100%; max-height: 260px; border-radius: 8px; background: #000; cursor: crosshair; touch-action: none; }
+.cptip { position: absolute; z-index: 2; pointer-events: none; display: flex; align-items: center; gap: .4rem; padding: .2rem .6rem .2rem .25rem; background: rgba(5, 11, 24, .96); border: 1px solid var(--line2); border-radius: 999px; font: 700 .75rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+.cptip[hidden] { display: none; }
+.cptip__sw { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff; }
