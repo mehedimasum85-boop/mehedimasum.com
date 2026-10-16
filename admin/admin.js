@@ -39,7 +39,7 @@
   }
 
   // ---------- state + api ----------
-  var S = { me: null, content: null, rev: 0, dirty: false, view: { name: 'page', slug: 'home' }, pfCat: 'all' };
+  var S = { me: null, content: null, rev: 0, dirty: false, view: { name: 'page', slug: 'home' }, pfCat: 'all', trash: {} };
   var BUILTIN = { home: 'index.html', portfolio: 'portfolio.html', about: 'about.html', contact: 'contact.html' };
   var openSecs = new WeakSet(), openItems = new WeakSet();
 
@@ -107,16 +107,70 @@
     });
   }
 
-  function save() {
+  var saveQ = Promise.resolve();
+  function save() { saveQ = saveQ.then(doSave, doSave); return saveQ; } // saves run one after another, so the version number never clashes
+  function doSave() {
     if (!S.dirty) return Promise.resolve();
     function btns() { return Array.prototype.slice.call(document.querySelectorAll('#saveBtn, .js-save')); }
     btns().forEach(function (b) { b.disabled = true; b.textContent = 'Saving...'; });
     return api('PUT', '/api/content', { rev: S.rev, content: S.content }).then(function (j) {
-      S.rev = j.rev; S.dirty = false; updateTop(); toast('Saved. Your live site is updated.', 'ok');
+      S.rev = j.rev; S.dirty = false; updateTop();
+      return purgeTrash().then(function (n) {
+        toast('Saved. Your live site is updated.' + (n ? ' ' + n + ' unused file' + (n > 1 ? 's' : '') + ' deleted from the Library.' : ''), 'ok');
+      });
     }).catch(function (e) {
       if (e.code === 'must_change') { go({ name: 'account' }); }
       fail(e);
     }).then(function () { btns().forEach(function (b) { b.textContent = 'Save changes'; b.disabled = !S.dirty; }); });
+  }
+  // Files of removed images/projects. They are deleted from the Library right after a successful save,
+  // and only if nothing on the site uses them any more (a duplicated project may share the same file).
+  // Is this file address used in the content? Matches the whole address only, so "images/a.jpg" does not match inside "https://host/images/a.jpg".
+  function urlInUse(text, url) {
+    var from = 0, i, before, after;
+    while ((i = text.indexOf(url, from)) !== -1) {
+      before = i ? text.charAt(i - 1) : '';
+      after = text.charAt(i + url.length);
+      if (!/[A-Za-z0-9\/.:_~%@-]/.test(before) && !/[A-Za-z0-9_~%\/-]/.test(after)) return true;
+      from = i + 1;
+    }
+    return false;
+  }
+  function queueTrash(urls) { (urls || []).forEach(function (u) { if (u) S.trash[u] = true; }); }
+  function filesOf(p) {
+    var all = [p.cover].concat([].concat.apply([], p.slides || []));
+    return all.filter(function (u, i) { return u && all.indexOf(u) === i; });
+  }
+  function purgeTrash() {
+    var urls = Object.keys(S.trash);
+    if (!urls.length) return Promise.resolve(0);
+    var text = JSON.stringify(S.content);
+    var doomed = urls.filter(function (u) { return !urlInUse(text, u); });
+    S.trash = {};
+    if (!doomed.length) return Promise.resolve(0);
+    return api('GET', '/api/upload').then(function (j) {
+      var map = {};
+      (j.items || []).forEach(function (it) { map[it.url] = it.pathname; });
+      var paths = doomed.map(function (u) { return map[u]; }).filter(Boolean); // only files in the Library can be deleted
+      if (!paths.length) return 0;
+      return api('POST', '/api/upload?action=delete', { paths: paths }).then(function (r) { return r.deleted || 0; });
+    }).catch(function () { return 0; });
+  }
+  function confirmBox(title, text, okLabel) {
+    return new Promise(function (resolve) {
+      var back = h('div', { class: 'modal modal--confirm' });
+      function done(v) { document.removeEventListener('keydown', onKey, true); back.remove(); resolve(v); }
+      function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); done(false); } }
+      var cancel = h('button', { class: 'btn', type: 'button', onclick: function () { done(false); } }, 'Cancel');
+      var ok = h('button', { class: 'btn btn--danger btn--solid', type: 'button', onclick: function () { done(true); } }, okLabel || 'Delete');
+      back.appendChild(h('div', { class: 'modal__box confirm', role: 'alertdialog', 'aria-label': title },
+        h('div', { class: 'modal__head' }, h('h2', {}, title)),
+        h('div', { class: 'confirm__body' }, h('p', { class: 'confirm__text' }, text), h('div', { class: 'row confirm__btns' }, cancel, ok))));
+      back.addEventListener('click', function (e) { if (e.target === back) done(false); });
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(back);
+      cancel.focus();
+    });
   }
   function saveButton(extra) {
     var b = h('button', { class: 'btn btn--primary js-save' + (extra ? ' ' + extra : ''), type: 'button', onclick: save }, 'Save changes');
@@ -750,8 +804,16 @@
           h('button', { class: 'icon', type: 'button', title: 'Move up', onclick: function () { moveProject(p, -1); } }, '\u2191'),
           h('button', { class: 'icon', type: 'button', title: 'Move down', onclick: function () { moveProject(p, 1); } }, '\u2193'),
           h('button', { class: 'icon', type: 'button', title: 'Duplicate', onclick: function () { var c = clone(p); c.id = 'p-' + uid(); c.title += ' (copy)'; projects.splice(projects.indexOf(p) + 1, 0, c); touch(); renderShell(); } }, '\u29C9'),
-          h('button', { class: 'icon icon--danger', type: 'button', title: 'Delete', onclick: function () {
-            if (confirm('Delete the project "' + p.title + '"?')) { projects.splice(projects.indexOf(p), 1); touch(); renderShell(); }
+          h('button', { class: 'icon icon--danger', type: 'button', title: 'Delete project', onclick: function () {
+            var files = filesOf(p);
+            var msg = '"' + p.title + '" will be removed from your website' +
+              (files.length ? ', and its ' + files.length + (files.length > 1 ? ' images/videos' : ' image/video') + ' will be deleted from the Library' : '') +
+              '. This cannot be undone.' + (S.dirty ? '\n\nYour other unsaved changes will be saved too.' : '');
+            confirmBox('Delete this project?', msg, 'Delete project').then(function (yes) {
+              if (!yes) return;
+              projects.splice(projects.indexOf(p), 1); queueTrash(files); touch(); renderShell();
+              save(); // saves the site, then removes the files that nothing uses any more
+            });
           } }, '\u2715'))));
     });
     if (cats.length && !list.length) body.appendChild(h('p', { class: 'hint' }, 'No projects here yet. Click "+ Add project".'));
@@ -1043,7 +1105,7 @@
         var imgs = h('div', { class: 'slide__imgs' });
         sl.forEach(function (u, j) {
           imgs.appendChild(h('div', { class: 'sthumb' }, mediaThumb(u),
-            h('button', { type: 'button', title: 'Remove image', onclick: function () { sl.splice(j, 1); if (!sl.length) p.slides.splice(i, 1); touch(); render(); } }, '\u2715')));
+            h('button', { type: 'button', title: 'Remove image', onclick: function () { var gone = sl.splice(j, 1); if (!sl.length) p.slides.splice(i, 1); queueTrash(gone); touch(); render(); save(); } }, '\u2715')));
         });
         var row = h('div', { class: 'slide' }, h('span', { class: 'slide__n' }, String(i + 1)), imgs);
         var prog = h('span', { class: 'prog' });
@@ -1062,7 +1124,7 @@
         row.appendChild(h('div', { class: 'row' },
           h('button', { class: 'icon', type: 'button', disabled: i === 0, title: 'Move up', onclick: function () { move(p.slides, i, -1); touch(); render(); } }, '\u2191'),
           h('button', { class: 'icon', type: 'button', disabled: i === p.slides.length - 1, title: 'Move down', onclick: function () { move(p.slides, i, 1); touch(); render(); } }, '\u2193'),
-          h('button', { class: 'icon icon--danger', type: 'button', title: 'Delete slide', onclick: function () { p.slides.splice(i, 1); touch(); render(); } }, '\u2715')));
+          h('button', { class: 'icon icon--danger', type: 'button', title: 'Delete slide', onclick: function () { var gone = p.slides.splice(i, 1); queueTrash([].concat.apply([], gone)); touch(); render(); save(); } }, '\u2715')));
         wrap.appendChild(row);
       });
       var per = h('select', { class: 'in', style: 'width:auto' }, [1, 2, 3].map(function (n) { return h('option', { value: n }, n + (n === 1 ? ' image per slide' : ' images per slide')); }));
@@ -1127,7 +1189,7 @@
   function renderLibrary(view) {
     var items = [], selected = {}, filter = 'all';
     var usedText = JSON.stringify(S.content); // a file counts as "in use" if its address appears anywhere in your content (even unsaved edits)
-    function isUsed(it) { return usedText.indexOf(it.url) !== -1; }
+    function isUsed(it) { return urlInUse(usedText, it.url); }
     var summary = h('p', { class: 'hint' }, 'Loading...');
     var listEl = h('div', { class: 'liblist' });
     var tools = h('div', { class: 'libtools' });
