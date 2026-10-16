@@ -111,7 +111,7 @@ main:focus { outline: none; }
 .portrait figcaption { display: flex; flex-direction: column; margin-top: 1.25rem; padding-left: .25rem; }
 .portrait { container-type: inline-size; }
 .portrait figcaption strong { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.2rem, 2.6vw, 1.95rem); font-size: clamp(1.2rem, 7.2cqw, 2.05rem); line-height: 1.15; white-space: nowrap; letter-spacing: -.005em; }
-.portrait figcaption span { color: var(--cyan); font-size: 20px; font-weight: 500; margin-top: .5rem; letter-spacing: .015em; opacity: .92; }
+.portrait figcaption span { color: var(--cyan); font-size: 18px; font-weight: 500; margin-top: .5rem; letter-spacing: .015em; opacity: .92; }
 
 /* Sections */
 .section { padding: var(--section-y) 0 0; }
