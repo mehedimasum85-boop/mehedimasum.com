@@ -34,13 +34,23 @@ module.exports = async (req, res) => {
       const s = await A.session(req);
       if (!s) return A.send(res, 401, { error: 'Please log in again.' });
       const files = await store.listFiles('uploads/');
-      return A.send(res, 200, { items: files.slice(0, 300).map((f) => ({ url: f.url, name: f.pathname.split('/').pop(), size: f.size, uploadedAt: f.uploadedAt })) });
+      return A.send(res, 200, { items: files.slice(0, 1000).map((f) => ({ url: f.url, pathname: f.pathname, name: f.pathname.split('/').pop(), size: f.size, uploadedAt: f.uploadedAt })) });
     }
     if (req.method !== 'POST') return A.send(res, 405, { error: 'Method not allowed.' });
     const s = await A.requireWriter(req, res);
     if (!s) return;
 
     const action = new URL(req.url, 'http://x').searchParams.get('action');
+
+    // Library page: delete the selected files
+    if (action === 'delete') {
+      const b = await A.readJSON(req, 200 * 1024);
+      const paths = (Array.isArray(b.paths) ? b.paths : []).map(String)
+        .filter((p) => p.indexOf('uploads/') === 0 && p.indexOf('..') === -1 && p.indexOf('\0') === -1).slice(0, 500);
+      if (!paths.length) return A.send(res, 400, { error: 'Nothing to delete.' });
+      await store.removeFiles(paths);
+      return A.send(res, 200, { deleted: paths.length });
+    }
 
     // "Check storage" button in the admin: verifies keys + bucket here, the browser then tests upload (CORS) and the public link.
     if (action === 'check') {
