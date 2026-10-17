@@ -147,7 +147,7 @@
   function queueTrash(urls) { (urls || []).forEach(function (u) { if (u) S.trash[u] = true; }); }
   function filesOf(p) {
     var all = [p.cover].concat([].concat.apply([], p.slides || []));
-    return all.filter(function (u, i) { return u && all.indexOf(u) === i; });
+    return all.filter(function (u, i) { return u && !ytId(u) && all.indexOf(u) === i; });
   }
   function purgeTrash() {
     var urls = Object.keys(S.trash);
@@ -180,6 +180,88 @@
       cancel.focus();
     });
   }
+  function askBox(o) { // a small popup with one text box
+    return new Promise(function (resolve) {
+      var back = h('div', { class: 'modal modal--confirm' });
+      function done(v) { document.removeEventListener('keydown', onKey, true); back.remove(); resolve(v); }
+      function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); done(null); } }
+      var inp = h('input', { class: 'in', type: 'text', placeholder: o.placeholder || '', spellcheck: false, autocomplete: 'off' });
+      var err = h('p', { class: 'err' }, '');
+      function submit() { var v = inp.value.trim(), e = o.validate ? o.validate(v) : ''; if (e) { err.textContent = e; return; } done(v); }
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+      back.appendChild(h('div', { class: 'modal__box confirm', role: 'dialog', 'aria-label': o.title },
+        h('div', { class: 'modal__head' }, h('h2', {}, o.title)),
+        h('div', { class: 'confirm__body' }, h('p', { class: 'confirm__text' }, o.text), inp, err,
+          h('div', { class: 'row confirm__btns' },
+            h('button', { class: 'btn', type: 'button', onclick: function () { done(null); } }, 'Cancel'),
+            h('button', { class: 'btn btn--primary', type: 'button', onclick: submit }, o.okLabel || 'OK')))));
+      back.addEventListener('click', function (e) { if (e.target === back) done(null); });
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(back);
+      inp.focus();
+    });
+  }
+
+  // Cover image taken from a video. A YouTube player does not let the browser grab its frames (a browser security rule),
+  // so there are two ways: YouTube's own HD picture of the video, or any frame of the same video file from your computer.
+  function coverFromVideo(p, onPick) {
+    var ids = [];
+    [].concat.apply([], p.slides || []).forEach(function (u) { var id = ytId(u); if (id && ids.indexOf(id) === -1) ids.push(id); });
+    var body = h('div', { class: 'cfv' }), fileUrl = null, m;
+    function done(url) { m.close(); onPick(url); toast('Cover image set. Press Save changes to publish it.', 'ok'); }
+
+    ids.forEach(function (id, idx) {
+      var st = h('span', { class: 'prog' });
+      var use = h('button', { class: 'btn btn--sm btn--primary', type: 'button' }, 'Use this picture as cover');
+      use.addEventListener('click', function () {
+        use.disabled = true; st.textContent = 'Saving...';
+        api('POST', '/api/upload?action=ytthumb', { id: id }).then(function (j) { done(j.url); })
+          .catch(function (e) { use.disabled = false; st.textContent = ''; fail(e); });
+      });
+      body.appendChild(h('div', { class: 'cfv__sec' }, h('div', { class: 'lbl' }, 'Picture from your YouTube video' + (ids.length > 1 ? ' ' + (idx + 1) : '')),
+        h('p', { class: 'hint' }, 'YouTube\'s own HD picture of this video (the one you chose as the YouTube thumbnail, or the one YouTube picked).'),
+        ytImg(id, 'cfv__yt'), h('div', { class: 'row' }, use, st)));
+    });
+
+    var sec = h('div', { class: 'cfv__sec' });
+    sec.appendChild(h('div', { class: 'lbl' }, 'Pick any frame from the video file on your computer'));
+    sec.appendChild(h('p', { class: 'hint' }, 'Choose the same video file you uploaded to YouTube. It is not uploaded here, only the one frame you pick. Play it, pause on the frame you like, then press the button.'));
+    var stage = h('div', {});
+    var choose = h('button', { class: 'btn btn--sm', type: 'button' }, 'Choose video file');
+    choose.addEventListener('click', function () {
+      pickFiles(false, 'video').then(function (fs) {
+        if (!fs[0]) return;
+        if (fileUrl) URL.revokeObjectURL(fileUrl);
+        fileUrl = URL.createObjectURL(fs[0]);
+        stage.innerHTML = '';
+        var v = h('video', { class: 'cfv__video', src: fileUrl, controls: true, playsinline: true, preload: 'auto' });
+        var msg = h('p', { class: 'err' }, ''), st = h('span', { class: 'prog' });
+        v.addEventListener('error', function () { msg.textContent = 'This video cannot be played in your browser. Please choose an MP4 (H.264) file.'; });
+        function step(d) { return h('button', { class: 'btn btn--sm', type: 'button', onclick: function () { v.pause(); v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + d)); } }, d < 0 ? (d < -0.5 ? '\u25c0\u25c0 1s' : '\u25c0 frame') : (d > 0.5 ? '1s \u25b6\u25b6' : 'frame \u25b6')); }
+        var use = h('button', { class: 'btn btn--sm btn--primary', type: 'button' }, 'Use this frame as cover');
+        use.addEventListener('click', function () {
+          v.pause();
+          if (!v.videoWidth) { msg.textContent = 'Wait for the video to load first.'; return; }
+          var c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+          c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+          c.toBlob(function (blob) {
+            if (!blob) { msg.textContent = 'Could not read this frame.'; return; }
+            use.disabled = true; st.textContent = 'Uploading...';
+            uploadFile(new File([blob], 'video-frame.jpg', { type: 'image/jpeg' })).then(done)
+              .catch(function (e) { use.disabled = false; st.textContent = ''; fail(e); });
+          }, 'image/jpeg', 0.95);
+        });
+        stage.appendChild(v);
+        stage.appendChild(h('div', { class: 'row cfv__row' }, step(-1), step(-1 / 30), step(1 / 30), step(1), use, st));
+        stage.appendChild(msg);
+      });
+    });
+    sec.appendChild(h('div', { class: 'row' }, choose));
+    sec.appendChild(stage);
+    body.insertBefore(sec, body.firstChild); // the frame picker comes first
+    m = modal('Cover image from a video', body, function () { document.body.style.overflow = 'hidden'; if (fileUrl) URL.revokeObjectURL(fileUrl); });
+  }
+
   function saveButton(extra) {
     var b = h('button', { class: 'btn btn--primary js-save' + (extra ? ' ' + extra : ''), type: 'button', onclick: save }, 'Save changes');
     b.disabled = !S.dirty;
@@ -407,8 +489,37 @@
     });
   }
   var VIDEO_RE = /\.(mp4|webm|mov|m4v)(\?|#|$)/i;
-  function isVideo(u) { return VIDEO_RE.test(String(u || '')); }
+  function ytId(u) { // the 11-character id of a YouTube link (watch, youtu.be, shorts, embed, live)
+    var m = /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*&)?v=|embed\/|shorts\/|live\/|v\/))([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/.exec(String(u || '').trim());
+    return m ? m[1] : '';
+  }
+  function isVideo(u) { return !!ytId(u) || VIDEO_RE.test(String(u || '')); }
+  // YouTube picture of a video; falls back to a smaller size when the HD one does not exist
+  function ytImg(id, cls) {
+    var im = h('img', { class: cls || '', alt: '' }), sizes = ['maxresdefault', 'sddefault', 'hqdefault'], k = 0;
+    function next() { if (k < sizes.length) im.src = 'https://i.ytimg.com/vi/' + id + '/' + sizes[k++] + '.jpg'; }
+    im.addEventListener('error', next);
+    im.addEventListener('load', function () { if (im.naturalWidth < 200 && k < sizes.length) next(); });
+    next();
+    return im;
+  }
+  // Plays the connected YouTube video right here, before saving anything
+  function ytPlayer(id) {
+    var box = h('div', { class: 'ytbox' });
+    function poster() {
+      box.innerHTML = '';
+      box.appendChild(h('button', { class: 'ytbox__play', type: 'button', title: 'Play the video here', onclick: play }, ytImg(id), h('span', { class: 'ytbox__icon' })));
+    }
+    function play() {
+      box.innerHTML = '';
+      box.appendChild(h('iframe', { src: 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0&playsinline=1', allow: 'autoplay; encrypted-media; picture-in-picture; fullscreen', allowfullscreen: 'true', title: 'Video preview' }));
+    }
+    poster();
+    return box;
+  }
   function mediaThumb(u) {
+    var id = ytId(u);
+    if (id) return h('div', { class: 'ytthumb' }, ytImg(id), h('span', { class: 'ytthumb__play' }));
     return isVideo(u) ? h('video', { src: ru(u) + '#t=0.1', muted: true, preload: 'metadata', playsinline: true }) : h('img', { src: ru(u), alt: '' });
   }
   function typeOf(file) {
@@ -460,7 +571,7 @@
     }).catch(fail);
   }
 
-  function imageField(label, obj, key, hint) {
+  function imageField(label, obj, key, hint, fromVideo) {
     var wrap = h('div', { class: 'f' });
     function render() {
       wrap.innerHTML = '';
@@ -480,6 +591,7 @@
       wrap.appendChild(h('div', { class: 'img' }, th, h('div', { class: 'img__col' }, inp,
         h('div', { class: 'row' }, up,
           h('button', { class: 'btn btn--sm', type: 'button', onclick: function () { library(function (u) { obj[key] = u; touch(); render(); }); } }, 'Library'),
+          fromVideo ? h('button', { class: 'btn btn--sm', type: 'button', onclick: function () { fromVideo(function (u) { obj[key] = u; touch(); render(); }); } }, 'From video') : null,
           url ? h('button', { class: 'btn btn--sm btn--danger', type: 'button', onclick: function () { obj[key] = ''; touch(); render(); } }, 'Remove') : null, st),
         hint ? h('span', { class: 'hint' }, hint) : null)));
     }
@@ -847,7 +959,7 @@
     sel.value = p.category; sel.addEventListener('change', function () { p.category = sel.value; touch(); });
     body.appendChild(h('div', { class: 'grid2' }, h('label', { class: 'f' }, 'Category', sel),
       h('label', { class: 'f' }, 'Image description (for screen readers)', (function () { var i = h('input', { class: 'in', type: 'text', value: p.alt || '' }); i.addEventListener('input', function () { p.alt = i.value; touch(); }); return i; })())));
-    body.appendChild(imageField('Cover image (the card on the Portfolio page)', p, 'cover', 'Best size 4000 x 3000 px (4:3). Leave empty to use the first slide image. A project that has only videos needs a cover image.'));
+    body.appendChild(imageField('Cover image (the card on the Portfolio page)', p, 'cover', 'Best size 4000 x 3000 px (4:3). Leave empty to use the first slide image. A project that has only videos needs a cover image.', function (set) { coverFromVideo(p, set); }));
     var ph = h('input', { type: 'checkbox', checked: !!p.placeholder });
     ph.addEventListener('change', function () { p.placeholder = ph.checked; touch(); });
     body.appendChild(h('label', { class: 'check' }, ph, 'Show "Placeholder" badge'));
@@ -1112,7 +1224,7 @@
       p.slides.forEach(function (sl, i) {
         var imgs = h('div', { class: 'slide__imgs' });
         sl.forEach(function (u, j) {
-          imgs.appendChild(h('div', { class: 'sthumb' }, mediaThumb(u),
+          imgs.appendChild(h('div', { class: 'sthumb' + (ytId(u) ? ' sthumb--yt' : '') }, ytId(u) ? ytPlayer(ytId(u)) : mediaThumb(u),
             h('button', { type: 'button', title: 'Remove image', onclick: function () { var gone = sl.splice(j, 1); if (!sl.length) p.slides.splice(i, 1); queueTrash(gone); touch(); render(); save(); } }, '\u2715')));
         });
         var row = h('div', { class: 'slide' }, h('span', { class: 'slide__n' }, String(i + 1)), imgs);
@@ -1160,7 +1272,15 @@
               .then(function (u) { p.slides.push([u]); touch(); toast('Video added as a new slide.', 'ok'); render(); })
               .catch(function (e) { prog2.textContent = ''; fail(e); });
           });
-        } }, '+ Video (up to 1 GB)'), prog2));
+        } }, '+ Video (up to 1 GB)'),
+        h('button', { class: 'btn btn--sm btn--primary', type: 'button', onclick: function () {
+          askBox({ title: 'Add a YouTube video', text: 'Paste the YouTube link (public or unlisted). The video plays right inside your project popup on your website.', placeholder: 'https://www.youtube.com/watch?v=...', okLabel: 'Add video',
+            validate: function (v) { return ytId(v) ? '' : 'This does not look like a YouTube link.'; } }).then(function (v) {
+            if (!v) return;
+            p.slides.push(['https://www.youtube.com/watch?v=' + ytId(v)]); touch(); render();
+            toast('Video added. Press play on it to check.', 'ok');
+          });
+        } }, '+ YouTube link'), prog2));
     }
     render();
     return wrap;
