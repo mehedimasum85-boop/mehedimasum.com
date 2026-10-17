@@ -96,6 +96,14 @@
       if (!p.id) p.id = 'p-' + uid();
       if (!Array.isArray(p.slides)) p.slides = (p.images || []).map(function (u) { return [u]; });
     });
+    // One-time move for content saved earlier: the floating tags used to sit on the About photo, they now belong on the Home photo.
+    var mig = c.migrations = c.migrations || {};
+    if (!mig.chipsToHome) {
+      mig.chipsToHome = true;
+      var hero = function (slug) { return ((c.pages[slug] && c.pages[slug].sections) || []).filter(function (s) { return s && s.type === 'hero'; })[0]; };
+      var hh = hero('home'), ah = hero('about');
+      if (hh && ah && hh.layout === 'home' && !(hh.chips || []).length && (ah.chips || []).length) { hh.chips = ah.chips.slice(0, 3); ah.chips = []; }
+    }
     return c;
   }
 
@@ -201,7 +209,7 @@
         { k: 'imageAlt', t: 'text', l: 'Photo description (for screen readers)' },
         { k: 'captionName', t: 'text', l: 'Name under the photo' },
         { k: 'captionRole', t: 'text', l: 'Role under the photo' },
-        { k: 'chips', t: 'lines', l: 'Floating tags next to the photo (page style, max 3, one per line)' },
+        { k: 'chips', t: 'lines', l: 'Floating tags around the photo (max 3, one per line)' },
         ANCHOR
       ]
     },
