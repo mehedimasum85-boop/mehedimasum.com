@@ -41,6 +41,30 @@
     return list.length ? '<ul class="tags" aria-label="' + esc(label) + '">' + list.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' : '';
   }
 
+  // The floating tags next to a photo (max 3).
+  function chipHtml(list) {
+    return arr(list).filter(Boolean).slice(0, 3).map(function (c, i) {
+      return '<span class="chip-float chip-float--' + 'abc'[i] + '" aria-hidden="true">' + esc(c) + '</span>';
+    }).join('');
+  }
+  // One-time move for content saved earlier: the floating tags used to sit on the About photo, they now belong on the Home photo.
+  function moveChipsToHome(content) {
+    if (!content || typeof content !== 'object') return content;
+    var m = content.migrations = content.migrations || {};
+    if (m.chipsToHome) return content;
+    m.chipsToHome = true;
+    function firstHero(slug) {
+      var p = content.pages && content.pages[slug];
+      return arr(p && p.sections).filter(function (s) { return s && s.type === 'hero'; })[0];
+    }
+    var hh = firstHero('home'), ah = firstHero('about');
+    if (hh && ah && hh.layout === 'home' && !arr(hh.chips).length && arr(ah.chips).length) {
+      hh.chips = ah.chips.slice(0, 3);
+      ah.chips = [];
+    }
+    return content;
+  }
+
   // ---------- sections ----------
   var R = {};
 
@@ -50,7 +74,8 @@
     var caption = (s.captionName || s.captionRole) ? '<figcaption>' + (s.captionName ? '<strong>' + esc(s.captionName) + '</strong>' : '') + (s.captionRole ? '<span>' + esc(s.captionRole) + '</span>' : '') + '</figcaption>' : '';
     var imgTag = s.image ? '<img src="' + esc(src(s.image)) + '" alt="' + esc(s.imageAlt) + '" width="1000" height="1000" fetchpriority="high" /><span class="portrait__light" aria-hidden="true"></span>' : '';
     if (s.layout === 'home') {
-      var fig = s.image ? '<figure class="portrait"><div class="portrait__frame">' + imgTag + '</div>' + caption + '</figure>' : '';
+      var hchips = chipHtml(s.chips);
+      var fig = s.image ? '<figure class="portrait' + (hchips ? ' portrait--chips' : '') + '"><div class="portrait__stage"><div class="portrait__frame">' + imgTag + '</div>' + hchips + '</div>' + caption + '</figure>' : '';
       return '<section class="hero" aria-labelledby="' + tid + '"><div class="container' + (s.image ? ' hero__grid' : '') + '"><div class="hero__copy">' + eyebrow +
         '<h1 id="' + tid + '">' + esc(s.title) + '</h1>' + intro + btns(s.buttons) + '</div>' + fig + '</div></section>';
     }
@@ -58,9 +83,7 @@
     var line = '<span class="pf-hero-line" aria-hidden="true"></span>';
     var h1 = '<h1 id="' + tid + '" data-split>' + esc(s.title) + '</h1>';
     if (s.image) {
-      var chips = arr(s.chips).filter(Boolean).slice(0, 3).map(function (c, i) {
-        return '<span class="chip-float chip-float--' + 'abc'[i] + '" aria-hidden="true">' + esc(c) + '</span>';
-      }).join('');
+      var chips = chipHtml(s.chips);
       return '<section class="hero page-hero about-hero" aria-labelledby="' + tid + '">' + orbs + '<div class="container hero__grid">' +
         '<figure class="portrait about-portrait"><div class="about-portrait__frame">' + imgTag + '</div>' + chips + caption + '</figure>' +
         '<div class="hero__copy">' + eyebrow + h1 + line + intro + btns(s.buttons) + '</div></div></section>';
@@ -217,6 +240,7 @@
   }
 
   function render(content, isPreview) {
+    content = moveChipsToHome(content);
     var site = content.site || {};
     var slug = currentSlug();
     var page = content.pages && content.pages[slug];
