@@ -42,6 +42,25 @@ module.exports = async (req, res) => {
 
     const action = new URL(req.url, 'http://x').searchParams.get('action');
 
+    // Cover from a YouTube video: save YouTube's own thumbnail of the video in our storage
+    if (action === 'ytthumb') {
+      const b = await A.readJSON(req, 2 * 1024);
+      const id = String(b.id || '');
+      if (!/^[A-Za-z0-9_-]{11}$/.test(id)) return A.send(res, 400, { error: 'That does not look like a YouTube video.' });
+      let buf = null;
+      for (const name of ['maxresdefault', 'sddefault', 'hqdefault']) {
+        try {
+          const r = await fetch('https://i.ytimg.com/vi/' + id + '/' + name + '.jpg');
+          if (!r.ok) continue;
+          const ab = Buffer.from(await r.arrayBuffer());
+          if (ab.length > 5000 && ab.length < 3 * 1024 * 1024) { buf = ab; break; }
+        } catch (e) { /* try the next size */ }
+      }
+      if (!buf) return A.send(res, 404, { error: 'Could not get the thumbnail of this video. Is the link right, and is the video public or unlisted?' });
+      const url = await store.putFile('uploads/' + new Date().toISOString().slice(0, 7) + '/youtube-' + id + '.jpg', buf, 'image/jpeg');
+      return A.send(res, 200, { url: url });
+    }
+
     // Library page: delete the selected files
     if (action === 'delete') {
       const b = await A.readJSON(req, 200 * 1024);
