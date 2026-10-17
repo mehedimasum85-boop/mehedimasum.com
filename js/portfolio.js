@@ -13,7 +13,50 @@ window.PortfolioPage = (function () {
   if (!gallery || !filterBox || !dialog) return;
 
   var PER_SLIDE = 3;
-  function isVideo(u) { return /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(String(u || '')); }
+  // A YouTube link in a slide plays inside the preview popup (YouTube's own adaptive player, so it stays smooth on slow internet).
+  function ytId(u) {
+    var m = /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtu\.be\/|youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*&)?v=|embed\/|shorts\/|live\/|v\/))([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/.exec(String(u || '').trim());
+    return m ? m[1] : '';
+  }
+  function isVideo(u) { return !!ytId(u) || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(String(u || '')); }
+  function makeYT(id, p) {
+    var box = el('div', 'lb__yt');
+    function poster() {
+      box.innerHTML = '';
+      box.classList.remove('is-playing');
+      var btn = el('button', 'lb__ytplay');
+      btn.type = 'button';
+      btn.setAttribute('aria-label', 'Play video: ' + (p.title || ''));
+      var im = el('img');
+      im.alt = '';
+      var sizes = ['maxresdefault', 'sddefault', 'hqdefault'], k = 0;
+      function next() { if (k < sizes.length) im.src = 'https://i.ytimg.com/vi/' + id + '/' + sizes[k++] + '.jpg'; }
+      im.addEventListener('error', next);
+      im.addEventListener('load', function () { if (im.naturalWidth < 200 && k < sizes.length) next(); }); // YouTube answers with a tiny grey picture when the HD one does not exist
+      next();
+      btn.appendChild(im);
+      btn.appendChild(el('span', 'lb__ytplay__icon'));
+      btn.addEventListener('click', play);
+      box.appendChild(btn);
+    }
+    function play() {
+      box.innerHTML = '';
+      box.classList.add('is-playing');
+      var f = document.createElement('iframe');
+      f.src = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0&playsinline=1';
+      f.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+      f.allowFullscreen = true;
+      f.title = p.title || 'Video';
+      box.appendChild(f);
+    }
+    box._reset = poster;
+    poster();
+    return box;
+  }
+  function stopMedia() { // pause uploaded videos and put YouTube players back to their picture (this stops the sound)
+    Array.prototype.forEach.call(track.querySelectorAll('video'), function (v) { v.pause(); });
+    Array.prototype.forEach.call(track.querySelectorAll('.lb__yt.is-playing'), function (b) { if (b._reset) b._reset(); });
+  }
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // ---------- soft background colours taken from the images ----------
@@ -379,6 +422,7 @@ window.PortfolioPage = (function () {
       s.setAttribute('aria-roledescription', 'slide');
       s.setAttribute('aria-label', (k + 1) + ' of ' + n);
       imgs.forEach(function (u, j) {
+        if (ytId(u)) { s.classList.add('lb__slide--yt'); s.appendChild(makeYT(ytId(u), p)); return; }
         if (isVideo(u)) {
           var vd = el('video');
           vd.src = u;
@@ -434,7 +478,7 @@ window.PortfolioPage = (function () {
     btnPrevImg.disabled = k === 0;
     btnNextImg.disabled = k === n - 1;
     lbImgCount.textContent = (k + 1) + ' / ' + n;
-    Array.prototype.forEach.call(track.querySelectorAll('video'), function (v) { v.pause(); });
+    stopMedia();
     updateStageColors();
   }
 
@@ -443,7 +487,7 @@ window.PortfolioPage = (function () {
     if (cur && cur.bg) return setStageColors(cur.bg); // colours picked by hand in the admin
     var s = track.children[slideIndex];
     if (!s) return setStageColors(null);
-    var loaded = Array.prototype.filter.call(s.querySelectorAll('img'), function (im) { return im.complete && im.naturalWidth > 0; });
+    var loaded = Array.prototype.filter.call(s.querySelectorAll('img'), function (im) { return im.complete && im.naturalWidth > 0 && !im.closest('.lb__yt'); });
     if (!loaded.length) return setStageColors(null);
     var key = loaded.length;
     if (s._palKey !== key) {
@@ -485,7 +529,7 @@ window.PortfolioPage = (function () {
     dialog.dispatchEvent(new Event('close'));
   }
   dialog.addEventListener('close', function () {
-    Array.prototype.forEach.call(track.querySelectorAll('video'), function (v) { v.pause(); });
+    stopMedia();
     document.body.style.overflow = '';
     if (opener && document.body.contains(opener)) opener.focus();
   });
