@@ -223,3 +223,21 @@ a.btn { text-decoration: none; color: var(--text); }
 .confirm__btns { justify-content: flex-end; gap: .6rem; }
 .btn--solid.btn--danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn--solid.btn--danger:hover { filter: brightness(1.1); }
+
+.sthumb button { z-index: 3; }
+.sthumb--yt { width: 280px; height: auto; aspect-ratio: 16 / 9; }
+.ytbox { position: relative; width: 100%; height: 100%; aspect-ratio: 16 / 9; background: #000; }
+.ytbox__play { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: #000; cursor: pointer; display: block; }
+.ytbox__play img, .ytbox__play .cfv__yt { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ytbox__icon { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(5, 11, 24, .72); border: 2px solid rgba(255, 255, 255, .9); }
+.ytbox__icon::after { content: ''; position: absolute; left: 50%; top: 50%; margin: -10px 0 0 -6px; border-style: solid; border-width: 10px 0 10px 17px; border-color: transparent transparent transparent #fff; }
+.ytbox iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.ytthumb { position: relative; width: 100%; height: 100%; }
+.ytthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ytthumb__play { position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: rgba(0, 0, 0, .65); pointer-events: none; }
+.ytthumb__play::after { content: ''; position: absolute; left: 50%; top: 50%; margin: -6px 0 0 -3px; border-style: solid; border-width: 6px 0 6px 10px; border-color: transparent transparent transparent #fff; }
+.cfv { display: grid; gap: 1rem; padding: 1rem 1.1rem 1.2rem; }
+.cfv__sec { display: grid; gap: .6rem; padding: .9rem; border: 1px solid var(--line2); border-radius: 12px; background: var(--panel2); }
+.cfv__yt { width: min(100%, 440px); aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; display: block; background: #000; }
+.cfv__video { width: 100%; max-height: 50vh; background: #000; border-radius: 8px; display: block; }
+.cfv__row { margin-top: .6rem; flex-wrap: wrap; }
