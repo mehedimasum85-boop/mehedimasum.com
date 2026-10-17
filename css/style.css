@@ -109,9 +109,12 @@ main:focus { outline: none; }
     linear-gradient(to top, rgba(3, 6, 13, 0.85), transparent 28%),
     linear-gradient(115deg, rgba(47,107,255,.22), transparent 40%); mix-blend-mode: normal; }
 .portrait figcaption { display: flex; flex-direction: column; margin-top: 1.25rem; padding-left: .25rem; }
-.portrait { container-type: inline-size; }
-.portrait figcaption strong { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.2rem, 2.6vw, 1.95rem); font-size: clamp(1.2rem, 7.2cqw, 2.05rem); line-height: 1.15; white-space: nowrap; letter-spacing: -.005em; }
-.portrait figcaption span { color: var(--cyan); font-size: clamp(.9rem, 1.5vw, 1rem); font-size: clamp(.88rem, 3.5cqw, 1.02rem); font-weight: 500; margin-top: .5rem; letter-spacing: .015em; opacity: .92; }
+.portrait figcaption strong { font-family: var(--font-display); font-weight: 700; font-size: clamp(1.35rem, 2.3vw, 1.8rem); line-height: 1.2; white-space: nowrap; }
+.portrait figcaption span { color: var(--cyan); font-size: clamp(1.05rem, 2vw, 1.3rem); font-weight: 500; margin-top: .25rem; }
+/* Home photo caption: clearly bigger name, designation 18px (shrinks only if the screen is too narrow for one line) */
+.portrait:not(.about-portrait) { container-type: inline-size; }
+.portrait:not(.about-portrait) figcaption strong { font-size: clamp(1.2rem, 2.6vw, 1.95rem); font-size: clamp(1.2rem, 7.2cqw, 2.05rem); line-height: 1.15; letter-spacing: -.005em; }
+.portrait:not(.about-portrait) figcaption span { font-size: 18px; font-size: clamp(.8rem, 5cqw, 18px); margin-top: .5rem; letter-spacing: .01em; }
 
 /* Sections */
 .section { padding: var(--section-y) 0 0; }
@@ -491,8 +494,9 @@ html { scrollbar-color: #1b3a78 var(--black); }
 .about-portrait:hover::before { transform: translate(-1.6rem, 1.6rem); }
 .about-portrait .portrait__light { border-radius: 28px; }
 .about-portrait figcaption { position: absolute; left: 1.25rem; bottom: 1.25rem; margin: 0; padding: .7rem 1rem; border-radius: 14px; background: rgba(3, 6, 13, .72); border: 1px solid var(--line); backdrop-filter: blur(10px); }
-.about-portrait figcaption strong { font-size: 1.05rem; }
-.about-portrait figcaption span { font-size: .9rem; margin-top: 0; }
+.about-portrait { container-type: inline-size; }
+.about-portrait figcaption strong { font-size: 1.05rem; font-size: clamp(1.1rem, 5.9cqw, 1.28rem); }
+.about-portrait figcaption span { font-size: .9rem; font-size: clamp(.78rem, 3.4cqw, .82rem); margin-top: 0; }
 .chip-float { position: absolute; z-index: 2; padding: .45rem .95rem; border-radius: 999px; font-size: .82rem; font-weight: 600; color: var(--text);
   background: rgba(8, 18, 38, .85); border: 1px solid rgba(76, 201, 255, .45); backdrop-filter: blur(8px); box-shadow: 0 10px 30px -12px var(--glow); animation: chipBob 6s ease-in-out infinite alternate; }
 .chip-float--a { top: 9%; right: -1.5rem; }
@@ -568,3 +572,11 @@ html { scrollbar-color: #1b3a78 var(--black); }
 .skip-link:focus { z-index: 10000; }
 #main:empty { min-height: 60vh; }
 .project__badge[hidden] { display: none; }
+
+/* Home photo: floating tags around the photo (same look as the tags that used to be on the About photo) */
+.portrait__stage { position: relative; }
+@media (max-width: 960px) { .portrait--chips { margin-left: 1.5rem; width: min(100% - 3rem, 380px); } }
+@media (max-width: 560px) { /* on a phone the face is big: keep the tags on the empty parts of the photo */
+  .portrait--chips .chip-float--a { top: 0; }
+  .portrait--chips .chip-float--b { top: 64%; }
+}
